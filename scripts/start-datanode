@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+NODE_ID=$1
+RPC_ADDR=$2
+HTTP_ADDR=$3
+
+GREPTIME_BIN="${GREPTIME_BIN:-./greptime}"
+GREPTIME_HOME="${GREPTIME_HOME:-./.greptimedb}"
+METASRV_ADDR="${METASRV_ADDR:-127.0.0.1:3002}"
+DATA_DIR="${GREPTIME_HOME}/data-${NODE_ID}"
+CONFIG="${DATA_DIR}/datanode.toml"
+
+source "${GREPTIME_HOME}/s3.env"
+
+mkdir -p "${DATA_DIR}"
+
+cat > "${CONFIG}" <<EOF
+[storage]
+type = "S3"
+bucket = "test-bucket"
+root = "data"
+endpoint = "http://127.0.0.1:3900"
+region = "garage"
+access_key_id = "${S3_ACCESS_KEY}"
+secret_access_key = "${S3_SECRET_KEY}"
+EOF
+
+exec ${GREPTIME_BIN} datanode start \
+  --node-id "${NODE_ID}" \
+  --rpc-addr "${RPC_ADDR}" \
+  --http-addr "${HTTP_ADDR}" \
+  --metasrv-addr "${METASRV_ADDR}" \
+  --config-file "${CONFIG}" \
+  --data-home "${DATA_DIR}"

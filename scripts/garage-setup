@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONF="$(dirname "$0")/../garage.toml"
+BUCKET="test-bucket"
+GREPTIME_HOME="${GREPTIME_HOME:-./.greptimedb}"
+S3_ENV="${GREPTIME_HOME}/s3.env"
+
+echo "==> Waiting for garage to be ready..."
+for i in $(seq 1 30); do
+  if garage -c "$CONF" status &>/dev/null; then
+    break
+  fi
+  sleep 1
+done
+
+echo "==> Getting node ID..."
+NODE_ID=$(garage -c "$CONF" status 2>&1 | grep -E "^[0-9a-f]" | awk '{print $1}' | head -1)
+if [ -z "$NODE_ID" ]; then
+  echo "ERROR: Garage node not found"
+  exit 1
+fi
+
+echo "==> Configuring cluster layout..."
+garage -c "$CONF" layout assign -z local -c 1G "$NODE_ID" 2>/dev/null || true
+garage -c "$CONF" layout apply --version 1 2>/dev/null || true
+
+echo "==> Creating bucket '$BUCKET'..."
+garage -c "$CONF" bucket create "$BUCKET" 2>/dev/null || true
+
+echo "==> Creating API key..."
+if ! garage -c "$CONF" key info local-test-key &>/dev/null; then
+  CREATE_OUTPUT=$(garage -c "$CONF" key create local-test-key 2>&1)
+  ACCESS_KEY=$(echo "$CREATE_OUTPUT" | grep "Key ID:" | awk '{print $3}')
+  SECRET_KEY=$(echo "$CREATE_OUTPUT" | grep "Secret key:" | awk '{print $3}')
+else
+  echo "==> Key already exists, deleting and recreating..."
+  OLD_ACCESS_KEY=$(garage -c "$CONF" key info local-test-key 2>&1 | grep "Key ID:" | awk '{print $3}')
+  garage -c "$CONF" key delete --yes "$OLD_ACCESS_KEY" 2>/dev/null || true
+  CREATE_OUTPUT=$(garage -c "$CONF" key create local-test-key 2>&1)
+  ACCESS_KEY=$(echo "$CREATE_OUTPUT" | grep "Key ID:" | awk '{print $3}')
+  SECRET_KEY=$(echo "$CREATE_OUTPUT" | grep "Secret key:" | awk '{print $3}')
+fi
+
+echo "==> Granting key access to bucket..."
+garage -c "$CONF" bucket allow "$BUCKET" --key "$ACCESS_KEY" --read --write --owner 2>/dev/null || true
+
+mkdir -p "${GREPTIME_HOME}"
+cat > "${S3_ENV}" <<EOF
+export S3_ACCESS_KEY="${ACCESS_KEY}"
+export S3_SECRET_KEY="${SECRET_KEY}"
+EOF
+
+echo "==> Garage setup complete! Credentials written to ${S3_ENV}"

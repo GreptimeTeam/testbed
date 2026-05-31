@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONF="$(dirname $0)/../garage.toml"
+BUCKET="${1:-test-bucket}"
+
+echo "==> Stopping existing garage server..."
+pkill -f "garage.*server" 2>/dev/null || true
+sleep 1
+
+echo "==> Cleaning up old data..."
+rm -rf /tmp/garage
+
+echo "==> Starting garage server..."
+garage -c "$CONF" server &
+GARAGE_PID=$!
+sleep 2
+
+cleanup() {
+    echo ""
+    echo "==> Stopping garage server..."
+    kill $GARAGE_PID 2>/dev/null
+    wait $GARAGE_PID 2>/dev/null
+    echo "==> Removing data directory..."
+    rm -rf /tmp/garage
+    echo "==> Done."
+    exit 0
+}
+trap cleanup INT TERM
+
+echo "==> Checking cluster layout..."
+NODE_ID=$(garage -c "$CONF" status 2>&1 | grep -E "^[0-9a-f]" | awk '{print $1}' | head -1)
+
+if [ -z "$NODE_ID" ]; then
+    echo "ERROR: Garage server failed to start."
+    exit 1
+fi
+
+echo "==> Assigning node $NODE_ID to layout..."
+garage -c "$CONF" layout assign -z local -c 1G "$NODE_ID"
+garage -c "$CONF" layout apply --version 1
+
+echo "==> Creating bucket '$BUCKET'..."
+garage -c "$CONF" bucket create "$BUCKET"
+
+echo "==> Creating API key..."
+CREATE_OUTPUT=$(garage -c "$CONF" key create local-test-key 2>&1)
+ACCESS_KEY=$(echo "$CREATE_OUTPUT" | grep "Key ID:" | awk '{print $3}')
+SECRET_KEY=$(echo "$CREATE_OUTPUT" | grep "Secret key:" | awk '{print $3}')
+
+echo "==> Granting key access to bucket..."
+garage -c "$CONF" bucket allow "$BUCKET" --key "$ACCESS_KEY" --read --write --owner
+
+echo ""
+echo "==> Ready!"
+echo ""
+echo "export AWS_ENDPOINT_URL=http://127.0.0.1:3900"
+echo "export AWS_ACCESS_KEY_ID=$ACCESS_KEY"
+echo "export AWS_SECRET_ACCESS_KEY=$SECRET_KEY"
+echo "export AWS_REGION=garage"
+echo ""
+echo "Press Ctrl-C to stop the server."
+
+wait $GARAGE_PID

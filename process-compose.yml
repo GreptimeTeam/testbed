@@ -1,0 +1,199 @@
+version: "0.5"
+
+vars:
+  - name: GREPTIME_BIN
+    value: ./greptime
+  - name: GREPTIME_HOME
+    value: ./.greptimedb
+  - name: METASRV_ADDR
+    value: "127.0.0.1:3002"
+
+environment:
+  - GREPTIME_BIN={{.GREPTIME_BIN}}
+  - GREPTIME_HOME={{.GREPTIME_HOME}}
+  - METASRV_ADDR={{.METASRV_ADDR}}
+
+processes:
+  etcd:
+    command: |
+      etcd \
+        --data-dir {{.GREPTIME_HOME}}/etcd \
+        --listen-client-urls http://0.0.0.0:2379 \
+        --advertise-client-urls http://127.0.0.1:2379
+    readiness_probe:
+      exec:
+        command: "etcdctl endpoint health"
+      initial_delay_seconds: 2
+      period_seconds: 3
+      timeout_seconds: 3
+    availability:
+      restart: on_failure
+      max_restarts: 5
+
+  garage:
+    command: |
+      rm -rf {{.GREPTIME_HOME}}/garage
+      garage -c garage.toml server
+    depends_on:
+      etcd:
+        condition: process_healthy
+    readiness_probe:
+      exec:
+        command: "garage -c garage.toml status"
+      initial_delay_seconds: 2
+      period_seconds: 3
+      timeout_seconds: 5
+    availability:
+      restart: on_failure
+      max_restarts: 5
+
+  garage-setup:
+    command: |
+      scripts/garage-setup
+    depends_on:
+      garage:
+        condition: process_healthy
+    availability:
+      restart: on_failure
+      max_restarts: 5
+
+  metasrv:
+    command: |
+      {{.GREPTIME_BIN}} metasrv start \
+        --bind-addr 0.0.0.0:3002 \
+        --http-addr 0.0.0.0:4000 \
+        --store-addr=127.0.0.1:2379 \
+        --server-addr 127.0.0.1:3002 \
+        --data-home {{.GREPTIME_HOME}}/meta
+    depends_on:
+      etcd:
+        condition: process_healthy
+    readiness_probe:
+      exec:
+        command: "curl -sf http://127.0.0.1:4000/health"
+      initial_delay_seconds: 2
+      period_seconds: 3
+      timeout_seconds: 3
+    availability:
+      restart: on_failure
+      max_restarts: 5
+
+  datanode-0:
+    command: |
+      scripts/start-datanode 0 0.0.0.0:4100 0.0.0.0:4400
+    depends_on:
+      metasrv:
+        condition: process_healthy
+      garage-setup:
+        condition: process_completed_successfully
+    readiness_probe:
+      exec:
+        command: "curl -sf http://127.0.0.1:4400/health"
+      initial_delay_seconds: 2
+      period_seconds: 3
+      timeout_seconds: 3
+    availability:
+      restart: on_failure
+      max_restarts: 5
+
+  datanode-1:
+    command: |
+      scripts/start-datanode 1 0.0.0.0:4101 0.0.0.0:4401
+    depends_on:
+      metasrv:
+        condition: process_healthy
+      garage-setup:
+        condition: process_completed_successfully
+    readiness_probe:
+      exec:
+        command: "curl -sf http://127.0.0.1:4401/health"
+      initial_delay_seconds: 2
+      period_seconds: 3
+      timeout_seconds: 3
+    availability:
+      restart: on_failure
+      max_restarts: 5
+
+  datanode-2:
+    command: |
+      scripts/start-datanode 2 0.0.0.0:4102 0.0.0.0:4402
+    depends_on:
+      metasrv:
+        condition: process_healthy
+      garage-setup:
+        condition: process_completed_successfully
+    readiness_probe:
+      exec:
+        command: "curl -sf http://127.0.0.1:4402/health"
+      initial_delay_seconds: 2
+      period_seconds: 3
+      timeout_seconds: 3
+    availability:
+      restart: on_failure
+      max_restarts: 5
+
+  frontend:
+    command: |
+      {{.GREPTIME_BIN}} frontend start \
+        --http-addr 0.0.0.0:5000 \
+        --grpc-addr 0.0.0.0:5001 \
+        --mysql-addr 0.0.0.0:5002 \
+        --postgres-addr 0.0.0.0:5003 \
+        --metasrv-addr {{.METASRV_ADDR}} \
+        --data-home {{.GREPTIME_HOME}}/frontend
+    depends_on:
+      metasrv:
+        condition: process_healthy
+      datanode-0:
+        condition: process_healthy
+      datanode-1:
+        condition: process_healthy
+      datanode-2:
+        condition: process_healthy
+    readiness_probe:
+      exec:
+        command: "curl -sf http://127.0.0.1:5000/health"
+      initial_delay_seconds: 2
+      period_seconds: 3
+      timeout_seconds: 3
+    availability:
+      restart: on_failure
+      max_restarts: 5
+
+  haproxy:
+    command: |
+      haproxy -f haproxy.cfg
+    depends_on:
+      frontend:
+        condition: process_healthy
+    readiness_probe:
+      exec:
+        command: "curl -sf http://127.0.0.1:8080/health"
+      initial_delay_seconds: 2
+      period_seconds: 3
+      timeout_seconds: 3
+    availability:
+      restart: on_failure
+      max_restarts: 5
+
+  flownode:
+    command: |
+      {{.GREPTIME_BIN}} flownode start \
+        --node-id 0 \
+        --rpc-addr 0.0.0.0:6800 \
+        --http-addr 0.0.0.0:6900 \
+        --metasrv-addr {{.METASRV_ADDR}} \
+        --data-home {{.GREPTIME_HOME}}/flow-0
+    depends_on:
+      metasrv:
+        condition: process_healthy
+    readiness_probe:
+      exec:
+        command: "curl -sf http://127.0.0.1:6900/health"
+      initial_delay_seconds: 2
+      period_seconds: 3
+      timeout_seconds: 3
+    availability:
+      restart: on_failure
+      max_restarts: 5
+    disabled: true
