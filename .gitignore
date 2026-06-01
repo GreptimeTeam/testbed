@@ -2,3 +2,4 @@
 .envrc
 .greptimedb
 greptime
+greptime_data/

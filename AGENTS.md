@@ -27,18 +27,31 @@ Requires a `greptime` binary in the project root. All processes start in depende
 ## Cluster Topology
 
 ```
-etcd -> metasrv -> datanode-{0,1,2} -> frontend -> haproxy
+etcd -> metasrv -> datanode-{0,1} -> frontend -> haproxy
       -> garage -> garage-setup -(setup complete)-> datanodes
 ```
 
-- **etcd**: metadata backend for metasrv (port 2379)
-- **garage**: S3 storage for datanodes (port 3900, bucket `test-bucket`)
+### Default Processes (auto-started)
+
+- **etcd**: metadata backend for metasrv (port 11001)
+- **garage**: S3 storage for datanodes (port 11010, bucket `test-bucket`)
 - **garage-setup**: exits after creating bucket/key/layout, writes creds to `.greptimedb/s3.env`
-- **metasrv**: cluster coordinator (port 3002 gRPC, 4000 HTTP)
-- **datanode-{0,1,2}**: store data in garage via S3 protocol, each uses `scripts/start-datanode`
-- **frontend**: query layer (ports 5000-5003 for HTTP/gRPC/MySQL/PostgreSQL)
+- **metasrv**: cluster coordinator (port 11020 gRPC, 11021 HTTP)
+- **datanode-{0,1}**: store data in garage via S3 protocol, each uses `scripts/start-datanode`
+- **frontend**: query layer (ports 11040-11043 for HTTP/gRPC/MySQL/PostgreSQL)
 - **haproxy**: unified entry point proxying to frontend
-- **flownode**: disabled by default, start with `process-compose start flownode`
+
+### Optional Processes (disabled by default)
+
+- **metasrv-1**: second metasrv instance (port 11022 gRPC, 11023 HTTP)
+- **frontend-1**: second frontend instance (ports 11044-11047 for HTTP/gRPC/MySQL/PostgreSQL)
+- **flownode**: flow engine (port 11060 gRPC, 11061 HTTP)
+- **standalone**: single-node GreptimeDB using garage for object storage (ports 11070-11073 for HTTP/gRPC/MySQL/PostgreSQL)
+
+Start optional processes with:
+```bash
+process-compose start <process-name>
+```
 
 ## Connecting to GreptimeDB
 
@@ -46,12 +59,30 @@ Via haproxy (preferred):
 
 | Protocol | Address | Notes |
 |---|---|---|
-| HTTP API | `http://127.0.0.1:8080` | Dashboard and REST API |
-| gRPC | `127.0.0.1:9090` | |
-| MySQL | `127.0.0.1:3307` | User `root`, no password |
-| PostgreSQL | `127.0.0.1:5433` | User `root`, no password |
+| HTTP API | `http://127.0.0.1:11050` | Dashboard and REST API |
+| gRPC | `127.0.0.1:11051` | |
+| MySQL | `127.0.0.1:11052` | User `root`, no password |
+| PostgreSQL | `127.0.0.1:11053` | User `root`, no password |
 
-Direct to frontend (bypass haproxy): ports 5000-5003.
+Direct to frontend (bypass haproxy): ports 11040-11043.
+
+Standalone (when started): ports 11070-11073.
+
+## Port Allocation
+
+| Service | Ports |
+|---|---|
+| etcd | 11001 (client), 11002 (peer) |
+| garage | 11010 (S3 API), 11011 (RPC), 11012 (web) |
+| metasrv | 11020 (gRPC), 11021 (HTTP) |
+| metasrv-1 | 11022 (gRPC), 11023 (HTTP) |
+| datanode-0 | 11030 (gRPC), 11031 (HTTP) |
+| datanode-1 | 11032 (gRPC), 11033 (HTTP) |
+| frontend | 11040 (HTTP), 11041 (gRPC), 11042 (MySQL), 11043 (PostgreSQL) |
+| frontend-1 | 11044 (HTTP), 11045 (gRPC), 11046 (MySQL), 11047 (PostgreSQL) |
+| haproxy | 11050 (HTTP), 11051 (gRPC), 11052 (MySQL), 11053 (PostgreSQL) |
+| flownode | 11060 (gRPC), 11061 (HTTP) |
+| standalone | 11070 (HTTP), 11071 (gRPC), 11072 (MySQL), 11073 (PostgreSQL) |
 
 ## Useful Commands
 
@@ -59,7 +90,8 @@ Direct to frontend (bypass haproxy): ports 5000-5003.
 process-compose ps                          # check status
 process-compose logs <process>              # view logs
 process-compose restart <process>           # restart a process
-process-compose start flownode              # start flownode
+process-compose start <process>             # start an optional process
+process-compose stop <process>              # stop a process
 process-compose down                        # stop everything
 rm -rf .greptimedb                          # clean all data
 ```
@@ -69,3 +101,4 @@ rm -rf .greptimedb                          # clean all data
 - **Reset cluster**: `process-compose down && rm -rf .greptimedb && process-compose up`
 - **Change greptime binary**: replace `./greptime` or set `GREPTIME_BIN` in `process-compose.yml` vars
 - **Adjust ports**: edit `process-compose.yml` (process ports) and `haproxy.cfg` (proxy ports)
+- **Run standalone only**: `process-compose up etcd garage garage-setup standalone` (standalone needs garage-setup for S3 creds)
