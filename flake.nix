@@ -35,6 +35,7 @@
 
           buildInputs = buildInputs;
           NIX_HARDENING_ENABLE = "";
+          PC_PORT_NUM = "11099";
           LD_LIBRARY_PATH = lib.makeLibraryPath buildInputs;
         };
       });

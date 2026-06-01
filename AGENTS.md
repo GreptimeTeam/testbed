@@ -11,7 +11,9 @@ haproxy.cfg           Proxy routing HTTP/gRPC/MySQL/PostgreSQL to the frontend
 garage.toml           Garage S3-compatible storage config
 scripts/garage-setup  One-shot init: creates bucket, API key, layout in garage
 scripts/start-datanode Wrapper: generates S3 storage config and starts a datanode
+scripts/start-standalone Wrapper: generates S3 storage config and starts standalone mode
 scripts/garage-local  Standalone garage launcher (not used by process-compose)
+.env                  Process-compose env vars (PC_PORT_NUM)
 .greptimedb/          Runtime data (gitignored), created on first start
 ```
 
@@ -19,10 +21,35 @@ scripts/garage-local  Standalone garage launcher (not used by process-compose)
 
 ```bash
 nix develop
-process-compose up
 ```
 
+All processes are disabled by default. Dependencies are automatically resolved.
+
+### Garage S3 Storage Only
+
+```bash
+process-compose up garage
+```
+
+### GreptimeDB Standalone
+
+```bash
+process-compose up standalone
+```
+
+Starts garage → garage-setup → standalone.
+
+### GreptimeDB Distributed Cluster
+
+```bash
+process-compose up haproxy
+```
+
+Starts the full chain: etcd → garage → garage-setup → metasrv → datanode-{0,1} → frontend → haproxy.
+
 Requires a `greptime` binary in the project root. All processes start in dependency order with health checks. Garage data is wiped on each start.
+
+Process-compose server runs on port **11099** (set via `PC_PORT_NUM` in `.env`).
 
 ## Cluster Topology
 
@@ -31,7 +58,7 @@ etcd -> metasrv -> datanode-{0,1} -> frontend -> haproxy
       -> garage -> garage-setup -(setup complete)-> datanodes
 ```
 
-### Default Processes (auto-started)
+### Default Processes (started via `process-compose up haproxy`)
 
 - **etcd**: metadata backend for metasrv (port 11001)
 - **garage**: S3 storage for datanodes (port 11010, bucket `test-bucket`)
@@ -41,7 +68,7 @@ etcd -> metasrv -> datanode-{0,1} -> frontend -> haproxy
 - **frontend**: query layer (ports 11040-11043 for HTTP/gRPC/MySQL/PostgreSQL)
 - **haproxy**: unified entry point proxying to frontend
 
-### Optional Processes (disabled by default)
+### Optional Processes (start manually)
 
 - **metasrv-1**: second metasrv instance (port 11022 gRPC, 11023 HTTP)
 - **frontend-1**: second frontend instance (ports 11044-11047 for HTTP/gRPC/MySQL/PostgreSQL)
@@ -50,12 +77,12 @@ etcd -> metasrv -> datanode-{0,1} -> frontend -> haproxy
 
 Start optional processes with:
 ```bash
-process-compose start <process-name>
+process-compose process start <process-name>
 ```
 
 ## Connecting to GreptimeDB
 
-Via haproxy (preferred):
+Via haproxy (distributed cluster):
 
 | Protocol | Address | Notes |
 |---|---|---|
@@ -72,6 +99,7 @@ Standalone (when started): ports 11070-11073.
 
 | Service | Ports |
 |---|---|
+| process-compose | 11099 (server) |
 | etcd | 11001 (client), 11002 (peer) |
 | garage | 11010 (S3 API), 11011 (RPC), 11012 (web) |
 | metasrv | 11020 (gRPC), 11021 (HTTP) |
@@ -87,18 +115,20 @@ Standalone (when started): ports 11070-11073.
 ## Useful Commands
 
 ```bash
-process-compose ps                          # check status
-process-compose logs <process>              # view logs
-process-compose restart <process>           # restart a process
-process-compose start <process>             # start an optional process
-process-compose stop <process>              # stop a process
-process-compose down                        # stop everything
-rm -rf .greptimedb                          # clean all data
+process-compose process list                  # list processes
+process-compose process get <process>         # check status
+process-compose process logs <process>        # view logs
+process-compose process restart <process>     # restart a process
+process-compose process start <process>       # start an optional process
+process-compose process stop <process>        # stop a process
+process-compose down                          # stop everything
+rm -rf .greptimedb                            # clean all data
 ```
 
 ## Common Tasks
 
-- **Reset cluster**: `process-compose down && rm -rf .greptimedb && process-compose up`
+- **Reset cluster**: `process-compose down && rm -rf .greptimedb && process-compose up haproxy`
 - **Change greptime binary**: replace `./greptime` or set `GREPTIME_BIN` in `process-compose.yml` vars
 - **Adjust ports**: edit `process-compose.yml` (process ports) and `haproxy.cfg` (proxy ports)
-- **Run standalone only**: `process-compose up etcd garage garage-setup standalone` (standalone needs garage-setup for S3 creds)
+- **Run standalone only**: `process-compose up standalone` (auto-starts garage + garage-setup)
+- **S3 credentials**: `source .greptimedb/s3.env` (sets `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL`, `AWS_REGION`)

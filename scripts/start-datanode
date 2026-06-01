@@ -19,10 +19,10 @@ cat > "${CONFIG}" <<EOF
 [storage]
 data_home = "${DATA_DIR}"
 type = "S3"
-bucket = "test-bucket"
+bucket = "${S3_BUCKET}"
 root = "data"
-endpoint = "http://127.0.0.1:11010"
-region = "garage"
+endpoint = "${S3_ENDPOINT_URL}"
+region = "${S3_REGION}"
 access_key_id = "${S3_ACCESS_KEY}"
 secret_access_key = "${S3_SECRET_KEY}"
 

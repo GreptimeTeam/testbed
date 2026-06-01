@@ -49,6 +49,13 @@ mkdir -p "${GREPTIME_HOME}"
 cat > "${S3_ENV}" <<EOF
 export S3_ACCESS_KEY="${ACCESS_KEY}"
 export S3_SECRET_KEY="${SECRET_KEY}"
+export AWS_ACCESS_KEY_ID="${ACCESS_KEY}"
+export AWS_SECRET_ACCESS_KEY="${SECRET_KEY}"
+export AWS_ENDPOINT_URL="http://127.0.0.1:11010"
+export AWS_REGION="garage"
+export S3_ENDPOINT_URL="http://127.0.0.1:11010"
+export S3_REGION="garage"
+export S3_BUCKET="${BUCKET}"
 EOF
 
 echo "==> Garage setup complete! Credentials written to ${S3_ENV}"
