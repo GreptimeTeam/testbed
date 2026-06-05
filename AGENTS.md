@@ -15,6 +15,7 @@ scripts/start-standalone Wrapper: generates S3 storage config and starts standal
 scripts/garage-local  Standalone garage launcher (not used by process-compose)
 .env                  Process-compose env vars (PC_PORT_NUM)
 .greptimedb/          Runtime data (gitignored), created on first start
+datasources/prometheus/ Prometheus + node-exporter (podman-compose, remote writes to greptimedb)
 ```
 
 ## Starting the Cluster
@@ -111,6 +112,7 @@ Standalone (when started): ports 11070-11073.
 | haproxy | 11050 (HTTP), 11051 (gRPC), 11052 (MySQL), 11053 (PostgreSQL) |
 | flownode | 11060 (gRPC), 11061 (HTTP) |
 | standalone | 11070 (HTTP), 11071 (gRPC), 11072 (MySQL), 11073 (PostgreSQL) |
+| prometheus | 11080 (HTTP UI) |
 
 ## Useful Commands
 
@@ -132,3 +134,28 @@ rm -rf .greptimedb                            # clean all data
 - **Adjust ports**: edit `process-compose.yml` (process ports) and `haproxy.cfg` (proxy ports)
 - **Run standalone only**: `process-compose up standalone` (auto-starts garage + garage-setup)
 - **S3 credentials**: `source .greptimedb/s3.env` (sets `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL`, `AWS_REGION`)
+
+## Prometheus + Node Exporter
+
+A minimal Prometheus setup that scrapes node-exporter metrics and remote writes them into GreptimeDB via haproxy.
+
+Prerequisite: GreptimeDB cluster must be running (`process-compose up haproxy`).
+
+```bash
+podman-compose -f datasources/prometheus/compose.yaml up -d
+```
+
+- **Prometheus UI**: `http://127.0.0.1:11080`
+- **Remote write target**: `http://host.containers.internal:11050/v1/prometheus/write?db=public`
+- Scrapes `node_exporter:9100` every 15s
+
+Stop:
+```bash
+podman-compose -f datasources/prometheus/compose.yaml down
+```
+
+Verify metrics in GreptimeDB:
+```sql
+SHOW TABLES FROM public;
+SELECT * FROM node_cpu_seconds_total LIMIT 5;
+```

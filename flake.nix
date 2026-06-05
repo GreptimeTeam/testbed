@@ -26,8 +26,10 @@
             curl
             kind
             podman
+            podman-compose
             garage
             postgresql.out
+            mariadb
             process-compose
             etcd
             haproxy
