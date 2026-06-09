@@ -1,0 +1,143 @@
+## GreptimeDB Datanode Configuration (Template)
+## Based on: https://github.com/GreptimeTeam/greptimedb/blob/main/config/datanode.example.toml
+##
+## This is a template config. The start-datanode wrapper script generates
+## a final config per node by merging these settings with node-specific
+## values (node_id, grpc/http addresses, storage paths, S3 credentials).
+##
+## Node-specific overrides are set via CLI flags:
+##   --node-id, --grpc-bind-addr, --http-addr, --metasrv-addrs
+
+## Start services after regions have obtained leases.
+require_lease_before_startup = false
+
+## Initialize all regions in the background during startup.
+init_regions_in_background = false
+
+## Parallelism of initializing regions.
+init_regions_parallelism = 16
+
+## The metasrv client options.
+[meta_client]
+metasrv_addrs = ["127.0.0.1:11020"]
+timeout = "3s"
+ddl_timeout = "10s"
+connect_timeout = "1s"
+tcp_nodelay = true
+metadata_cache_max_capacity = 100000
+metadata_cache_ttl = "10m"
+metadata_cache_tti = "5m"
+
+## The WAL options.
+[wal]
+provider = "raft_engine"
+## dir is set per-node via placeholder substitution.
+dir = "__WAL_DIR__"
+file_size = "128MB"
+purge_threshold = "1GB"
+purge_interval = "1m"
+read_batch_size = 128
+sync_write = false
+enable_log_recycle = true
+prefill_log_files = false
+sync_period = "10s"
+recovery_parallelism = 2
+
+## The query engine options.
+[query]
+parallelism = 0
+memory_pool_size = "50%"
+
+## The data storage options.
+## Placeholders (__XXX__) are replaced by the start-datanode wrapper script
+## with node-specific values from .greptimedb/s3.env.
+[storage]
+data_home = "__DATA_HOME__"
+type = "S3"
+bucket = "__S3_BUCKET__"
+root = "__S3_ROOT__"
+endpoint = "__S3_ENDPOINT__"
+region = "__S3_REGION__"
+access_key_id = "__S3_ACCESS_KEY__"
+secret_access_key = "__S3_SECRET_KEY__"
+enable_virtual_host_style = false
+
+## The HTTP client options for S3 storage.
+[storage.http_client]
+pool_max_idle_per_host = 1024
+connect_timeout = "30s"
+timeout = "30s"
+pool_idle_timeout = "90s"
+skip_ssl_validation = false
+
+## The region engine options.
+[[region_engine]]
+
+[region_engine.mito]
+worker_channel_size = 128
+worker_request_batch_size = 64
+manifest_checkpoint_distance = 10
+compress_manifest = false
+auto_flush_interval = "1h"
+enable_write_cache = false
+write_cache_size = "5GiB"
+preload_index_cache = true
+index_cache_percent = 20
+enable_refill_cache_on_read = true
+manifest_cache_size = "256MB"
+sst_write_buffer_size = "8MB"
+max_concurrent_scan_files = 384
+allow_stale_entries = false
+scan_memory_limit = "unlimited"
+scan_memory_on_exhausted = "fail"
+min_compaction_interval = "0m"
+default_flat_format = true
+
+[region_engine.mito.index]
+staging_size = "2GB"
+staging_ttl = "7d"
+metadata_cache_size = "64MiB"
+content_cache_size = "128MiB"
+content_cache_page_size = "64KiB"
+result_cache_size = "128MiB"
+
+[region_engine.mito.inverted_index]
+create_on_flush = "auto"
+create_on_compaction = "auto"
+apply_on_query = "auto"
+mem_threshold_on_create = "auto"
+
+[region_engine.mito.fulltext_index]
+create_on_flush = "auto"
+create_on_compaction = "auto"
+apply_on_query = "auto"
+mem_threshold_on_create = "auto"
+
+[region_engine.mito.bloom_filter_index]
+create_on_flush = "auto"
+create_on_compaction = "auto"
+apply_on_query = "auto"
+mem_threshold_on_create = "auto"
+
+[region_engine.mito.gc]
+enable = false
+lingering_time = "1m"
+
+[[region_engine]]
+[region_engine.file]
+
+[[region_engine]]
+[region_engine.metric]
+sparse_primary_key_encoding = true
+
+## The logging options.
+[logging]
+dir = "__LOG_DIR__"
+level = "info"
+append_stdout = true
+log_format = "text"
+max_log_files = 720
+
+## The memory options.
+[memory]
+enable_heap_profiling = true

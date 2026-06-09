@@ -44,6 +44,22 @@ process-compose up haproxy
 
 Place a `greptime` binary in the project root before starting. Process-compose runs on port **11099**.
 
+## testbedctl
+
+A utility script for common operations against the running cluster:
+
+```bash
+./testbedctl psql                           # PostgreSQL CLI
+./testbedctl mysql                          # MySQL CLI
+./testbedctl s3 ls                          # List S3 buckets
+./testbedctl s3 ls s3://test-bucket/        # List objects in bucket
+./testbedctl s3 ls s3://test-bucket/ --recursive  # List all objects
+./testbedctl telemetrygen                   # Ingest OTel traces
+./testbedctl telemetrygen down              # Stop trace ingestion
+./testbedctl prometheus up -d               # Start Prometheus + node-exporter
+./testbedctl prometheus down                # Stop Prometheus
+```
+
 ## Start Extra Processes
 
 ```bash

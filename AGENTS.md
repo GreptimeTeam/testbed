@@ -7,12 +7,22 @@ This is a Nix flake for running a local GreptimeDB distributed cluster for testi
 ```
 flake.nix             Dev shell with all dependencies
 process-compose.yml   Process orchestration (cluster startup order, health checks, dependencies)
+config/               GreptimeDB component TOML templates (use __PLACEHOLDER__ vars)
+  metasrv.toml          Metasrv template (grpc, http, logging)
+  frontend.toml         Frontend template (http, grpc, mysql, postgres, meta_client)
+  datanode.toml         Datanode template (S3 storage, WAL, region engines)
+  standalone.toml       Standalone template (all-in-one with S3 storage)
+  flownode.toml         Flownode template (flow engine, grpc, http)
 haproxy.cfg           Proxy routing HTTP/gRPC/MySQL/PostgreSQL to the frontend
 garage.toml           Garage S3-compatible storage config
-scripts/garage-setup  One-shot init: creates bucket, API key, layout in garage
-scripts/start-datanode Wrapper: generates S3 storage config and starts a datanode
-scripts/start-standalone Wrapper: generates S3 storage config and starts standalone mode
-scripts/garage-local  Standalone garage launcher (not used by process-compose)
+scripts/
+  garage-setup          One-shot init: creates bucket, API key, layout in garage
+  start-metasrv         Wrapper: generates metasrv config from template, starts metasrv
+  start-frontend        Wrapper: generates frontend config from template, starts frontend
+  start-datanode        Wrapper: generates datanode config from template with S3 creds, starts datanode
+  start-flownode        Wrapper: generates flownode config from template, starts flownode
+  start-standalone      Wrapper: generates standalone config from template with S3 creds
+  garage-local          Standalone garage launcher (not used by process-compose)
 .env                  Process-compose env vars (PC_PORT_NUM)
 .greptimedb/          Runtime data (gitignored), created on first start
 datasources/prometheus/ Prometheus + node-exporter (podman-compose, remote writes to greptimedb)
@@ -117,6 +127,7 @@ Standalone (when started): ports 11070-11073.
 ## Useful Commands
 
 ```bash
+# Cluster management
 process-compose process list                  # list processes
 process-compose process get <process>         # check status
 process-compose process logs <process>        # view logs
@@ -125,15 +136,27 @@ process-compose process start <process>       # start an optional process
 process-compose process stop <process>        # stop a process
 process-compose down                          # stop everything
 rm -rf .greptimedb                            # clean all data
+
+# testbedctl - quick access to common operations
+./testbedctl psql                              # PostgreSQL CLI to GreptimeDB
+./testbedctl mysql                             # MySQL CLI to GreptimeDB
+./testbedctl s3 ls                             # list S3 buckets
+./testbedctl s3 ls s3://test-bucket/           # list objects
+./testbedctl s3 ls s3://test-bucket/ --recursive
+./testbedctl telemetrygen up                   # start trace ingestion
+./testbedctl telemetrygen down                 # stop trace ingestion
+./testbedctl prometheus up                     # start Prometheus + node-exporter
+./testbedctl prometheus down                   # stop Prometheus + node-exporter
 ```
 
 ## Common Tasks
 
 - **Reset cluster**: `process-compose down && rm -rf .greptimedb && process-compose up haproxy`
+- **Resume cluster**: `process-compose up haproxy` (preserves data if `.greptimedb` is not deleted; garage-setup will reuse existing credentials)
 - **Change greptime binary**: replace `./greptime` or set `GREPTIME_BIN` in `process-compose.yml` vars
 - **Adjust ports**: edit `process-compose.yml` (process ports) and `haproxy.cfg` (proxy ports)
 - **Run standalone only**: `process-compose up standalone` (auto-starts garage + garage-setup)
-- **S3 credentials**: `source .greptimedb/s3.env` (sets `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL`, `AWS_REGION`)
+- **testbedctl s3**: auto-sources `.greptimedb/s3.env` credentials before running `aws s3`
 
 ## Prometheus + Node Exporter
 
@@ -142,7 +165,7 @@ A minimal Prometheus setup that scrapes node-exporter metrics and remote writes 
 Prerequisite: GreptimeDB cluster must be running (`process-compose up haproxy`).
 
 ```bash
-podman-compose -f datasources/prometheus/compose.yaml up -d
+./testbedctl prometheus up -d
 ```
 
 - **Prometheus UI**: `http://127.0.0.1:11080`
@@ -151,11 +174,36 @@ podman-compose -f datasources/prometheus/compose.yaml up -d
 
 Stop:
 ```bash
-podman-compose -f datasources/prometheus/compose.yaml down
+./testbedctl prometheus down
 ```
 
 Verify metrics in GreptimeDB:
 ```sql
 SHOW TABLES FROM public;
 SELECT * FROM node_cpu_seconds_total LIMIT 5;
+```
+
+## OpenTelemetry Traces (telemetrygen)
+
+Generates synthetic OpenTelemetry traces and ingests them into GreptimeDB via haproxy using the OTLP HTTP endpoint.
+
+Prerequisite: GreptimeDB cluster must be running (`process-compose up haproxy`).
+
+```bash
+./testbedctl telemetrygen up
+```
+
+- **OTLP endpoint**: `http://host.containers.internal:11050/v1/otlp/v1/traces`
+- Generates 25000 traces with 6 child spans each, at 10000 traces/sec
+- Uses the `greptime_trace_v1` pipeline and writes to `opentelemetry_traces4` table
+
+Stop:
+```bash
+./testbedctl telemetrygen down
+```
+
+Verify traces in GreptimeDB:
+```sql
+SHOW TABLES FROM public;
+SELECT * FROM opentelemetry_traces4 LIMIT 5;
 ```

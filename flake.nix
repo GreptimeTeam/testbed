@@ -33,12 +33,20 @@
             process-compose
             etcd
             haproxy
+            awscli2
           ];
 
           buildInputs = buildInputs;
           NIX_HARDENING_ENABLE = "";
           PC_PORT_NUM = "11099";
           LD_LIBRARY_PATH = lib.makeLibraryPath buildInputs;
+
+          shellHook = ''
+            # Source Garage S3 credentials if available
+            if [ -f .greptimedb/s3.env ]; then
+              . .greptimedb/s3.env
+            fi
+          '';
         };
       });
 }

@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Usage: start-metasrv <node_id> <grpc_bind_addr> <grpc_server_addr> <http_addr> [store_addrs]
+#
+# node_id           Instance identifier (0, 1, ...)
+# grpc_bind_addr    gRPC bind address   (e.g. "0.0.0.0:11020")
+# grpc_server_addr  gRPC server address (e.g. "127.0.0.1:11020")
+# http_addr         HTTP address        (e.g. "0.0.0.0:11021")
+# store_addrs       Etcd endpoints      (default: "127.0.0.1:11001")
+
+NODE_ID=$1
+GRPC_BIND=$2
+GRPC_SERVER=$3
+HTTP_ADDR=$4
+STORE_ADDRS="${5:-127.0.0.1:11001}"
+
+GREPTIME_BIN="${GREPTIME_BIN:-./greptime}"
+GREPTIME_HOME="${GREPTIME_HOME:-./.greptimedb}"
+DATA_DIR="${GREPTIME_HOME}/meta-${NODE_ID}"
+CONFIG_TEMPLATE="$(dirname "$0")/../config/metasrv.toml"
+CONFIG="${DATA_DIR}/metasrv.toml"
+
+mkdir -p "${DATA_DIR}"
+
+sed \
+  -e "s|__DATA_HOME__|${DATA_DIR}|g" \
+  -e "s|__GRPC_BIND_ADDR__|${GRPC_BIND}|g" \
+  -e "s|__GRPC_SERVER_ADDR__|${GRPC_SERVER}|g" \
+  -e "s|__HTTP_ADDR__|${HTTP_ADDR}|g" \
+  -e "s|__LOG_DIR__|${DATA_DIR}/logs|g" \
+  "${CONFIG_TEMPLATE}" > "${CONFIG}"
+
+exec ${GREPTIME_BIN} metasrv start \
+  --config-file "${CONFIG}" \
+  --store-addrs "${STORE_ADDRS}"

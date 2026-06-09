@@ -1,0 +1,90 @@
+## GreptimeDB Frontend Configuration (Template)
+## Based on: https://github.com/GreptimeTeam/greptimedb/blob/main/config/frontend.example.toml
+##
+## Placeholders (__XXX__) are replaced by the start-frontend wrapper script
+## with instance-specific values.
+
+## The HTTP server options.
+[http]
+addr = "__HTTP_ADDR__"
+timeout = "0s"
+body_limit = "64MB"
+enable_cors = true
+
+## The gRPC server options.
+[grpc]
+bind_addr = "__GRPC_BIND_ADDR__"
+server_addr = "__GRPC_SERVER_ADDR__"
+runtime_size = 8
+flight_compression = "arrow_ipc"
+
+## MySQL server options.
+[mysql]
+enable = true
+addr = "__MYSQL_ADDR__"
+runtime_size = 2
+
+## PostgreSQL server options.
+[postgres]
+enable = true
+addr = "__POSTGRES_ADDR__"
+runtime_size = 2
+
+## OpenTSDB protocol options.
+[opentsdb]
+enable = true
+
+## InfluxDB protocol options.
+[influxdb]
+enable = true
+
+## Jaeger protocol options.
+[jaeger]
+enable = true
+
+## Prometheus remote storage options.
+[prom_store]
+enable = true
+with_metric_engine = true
+
+## The metasrv client options.
+[meta_client]
+metasrv_addrs = ["__METASRV_ADDR__"]
+timeout = "3s"
+ddl_timeout = "10s"
+connect_timeout = "1s"
+tcp_nodelay = true
+metadata_cache_max_capacity = 100000
+metadata_cache_ttl = "10m"
+metadata_cache_tti = "5m"
+
+## The query engine options.
+[query]
+parallelism = 0
+allow_query_fallback = false
+memory_pool_size = "50%"
+
+## Datanode options.
+[datanode.client]
+connect_timeout = "10s"
+tcp_nodelay = true
+
+## The logging options.
+[logging]
+dir = "__LOG_DIR__"
+level = "info"
+append_stdout = true
+log_format = "text"
+max_log_files = 720
+
+## The slow query log options.
+[slow_query]
+enable = true
+record_type = "system_table"
+threshold = "30s"
+sample_ratio = 1.0
+ttl = "90d"
+
+## The memory options.
+[memory]
+enable_heap_profiling = true

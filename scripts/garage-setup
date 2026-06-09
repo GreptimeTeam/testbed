@@ -6,6 +6,31 @@ BUCKET="test-bucket"
 GREPTIME_HOME="${GREPTIME_HOME:-./.greptimedb}"
 S3_ENV="${GREPTIME_HOME}/s3.env"
 
+# ── Fast path: if s3.env exists and garage is healthy, skip setup ──
+if [ -f "$S3_ENV" ]; then
+  echo "==> Found existing s3.env, checking garage..."
+  for i in $(seq 1 10); do
+    if garage -c "$CONF" status &>/dev/null; then
+      # Ensure aws-config exists (may be missing if .greptimedb was partially cleaned)
+      GREPTIME_HOME_ABS="$(cd "${GREPTIME_HOME}" && pwd)"
+      if [ ! -f "${GREPTIME_HOME_ABS}/aws-config" ]; then
+        cat > "${GREPTIME_HOME_ABS}/aws-config" <<AWSCONF
+[default]
+s3 =
+    addressing_style = path
+AWSCONF
+      fi
+      echo "==> Garage is healthy, reusing existing credentials."
+      exit 0
+    fi
+    sleep 1
+  done
+  echo "WARNING: Garage not responding, will reconfigure." >&2
+  rm -f "$S3_ENV"
+fi
+
+# ── Slow path: full setup ──
+
 echo "==> Waiting for garage to be ready..."
 for i in $(seq 1 30); do
   if garage -c "$CONF" status &>/dev/null; then
@@ -29,23 +54,36 @@ echo "==> Creating bucket '$BUCKET'..."
 garage -c "$CONF" bucket create "$BUCKET" 2>/dev/null || true
 
 echo "==> Creating API key..."
-if ! garage -c "$CONF" key info local-test-key &>/dev/null; then
-  CREATE_OUTPUT=$(garage -c "$CONF" key create local-test-key 2>&1)
-  ACCESS_KEY=$(echo "$CREATE_OUTPUT" | grep "Key ID:" | awk '{print $3}')
-  SECRET_KEY=$(echo "$CREATE_OUTPUT" | grep "Secret key:" | awk '{print $3}')
-else
-  echo "==> Key already exists, deleting and recreating..."
-  OLD_ACCESS_KEY=$(garage -c "$CONF" key info local-test-key 2>&1 | grep "Key ID:" | awk '{print $3}')
+# Always delete + recreate to ensure we get both access key and secret key.
+# (garage key info only shows the Key ID, not the secret.)
+if OLD_ACCESS_KEY=$(garage -c "$CONF" key info local-test-key 2>&1 | grep "Key ID:" | awk '{print $3}'); then
+  echo "==> Old key found, replacing..."
   garage -c "$CONF" key delete --yes "$OLD_ACCESS_KEY" 2>/dev/null || true
-  CREATE_OUTPUT=$(garage -c "$CONF" key create local-test-key 2>&1)
-  ACCESS_KEY=$(echo "$CREATE_OUTPUT" | grep "Key ID:" | awk '{print $3}')
-  SECRET_KEY=$(echo "$CREATE_OUTPUT" | grep "Secret key:" | awk '{print $3}')
+fi
+CREATE_OUTPUT=$(garage -c "$CONF" key create local-test-key 2>&1)
+ACCESS_KEY=$(echo "$CREATE_OUTPUT" | grep "Key ID:" | awk '{print $3}')
+SECRET_KEY=$(echo "$CREATE_OUTPUT" | grep "Secret key:" | awk '{print $3}')
+
+if [ -z "$ACCESS_KEY" ] || [ -z "$SECRET_KEY" ]; then
+  echo "ERROR: Failed to create API key"
+  exit 1
 fi
 
 echo "==> Granting key access to bucket..."
 garage -c "$CONF" bucket allow "$BUCKET" --key "$ACCESS_KEY" --read --write --owner 2>/dev/null || true
 
 mkdir -p "${GREPTIME_HOME}"
+
+# Compute absolute path for AWS_CONFIG_FILE
+GREPTIME_HOME_ABS="$(cd "${GREPTIME_HOME}" && pwd)"
+AWS_CONFIG="${GREPTIME_HOME_ABS}/aws-config"
+
+cat > "${GREPTIME_HOME}/aws-config" <<EOF
+[default]
+s3 =
+    addressing_style = path
+EOF
+
 cat > "${S3_ENV}" <<EOF
 export S3_ACCESS_KEY="${ACCESS_KEY}"
 export S3_SECRET_KEY="${SECRET_KEY}"
@@ -53,6 +91,7 @@ export AWS_ACCESS_KEY_ID="${ACCESS_KEY}"
 export AWS_SECRET_ACCESS_KEY="${SECRET_KEY}"
 export AWS_ENDPOINT_URL="http://127.0.0.1:11010"
 export AWS_REGION="garage"
+export AWS_CONFIG_FILE="${AWS_CONFIG}"
 export S3_ENDPOINT_URL="http://127.0.0.1:11010"
 export S3_REGION="garage"
 export S3_BUCKET="${BUCKET}"

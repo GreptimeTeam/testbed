@@ -1,0 +1,63 @@
+## GreptimeDB Metasrv Configuration (Template)
+## Based on: https://github.com/GreptimeTeam/greptimedb/blob/main/config/metasrv.example.toml
+##
+## Placeholders (__XXX__) are replaced by the start-metasrv wrapper script
+## with instance-specific values.
+
+## The working home directory.
+data_home = "__DATA_HOME__"
+
+## Store server address(es) - etcd backend.
+store_addrs = ["127.0.0.1:11001"]
+
+## The datastore for meta server.
+backend = "etcd_store"
+
+## Datanode selector type: "round_robin" | "lease_based" | "load_based"
+selector = "round_robin"
+
+## Whether to enable region failover.
+enable_region_failover = false
+
+## The gRPC server options.
+[grpc]
+bind_addr = "__GRPC_BIND_ADDR__"
+server_addr = "__GRPC_SERVER_ADDR__"
+runtime_size = 8
+max_recv_message_size = "512MB"
+max_send_message_size = "512MB"
+
+## The HTTP server options.
+[http]
+addr = "__HTTP_ADDR__"
+timeout = "0s"
+body_limit = "64MB"
+
+## Procedure storage options.
+[procedure]
+max_retry_times = 12
+retry_delay = "500ms"
+max_metadata_value_size = "1500KiB"
+max_running_procedures = 128
+
+## Failure detector options (Phi Accrual).
+[failure_detector]
+threshold = 8.0
+min_std_deviation = "100ms"
+acceptable_heartbeat_pause = "10000ms"
+
+## Datanode client options.
+[datanode.client]
+timeout = "10s"
+
+## The logging options.
+[logging]
+dir = "__LOG_DIR__"
+level = "info"
+append_stdout = true
+log_format = "text"
+max_log_files = 720
+
+## The memory options.
+[memory]
+enable_heap_profiling = true

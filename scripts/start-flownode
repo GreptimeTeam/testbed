@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Usage: start-flownode <node_id> <grpc_bind_addr> <grpc_server_addr> <http_addr>
+#
+# node_id           Instance identifier (0, 1, ...)
+# grpc_bind_addr    gRPC bind address   (e.g. "0.0.0.0:11060")
+# grpc_server_addr  gRPC server address (e.g. "127.0.0.1:11060")
+# http_addr         HTTP address        (e.g. "0.0.0.0:11061")
+
+NODE_ID=$1
+GRPC_BIND=$2
+GRPC_SERVER=$3
+HTTP_ADDR=$4
+
+GREPTIME_BIN="${GREPTIME_BIN:-./greptime}"
+GREPTIME_HOME="${GREPTIME_HOME:-./.greptimedb}"
+METASRV_ADDR="${METASRV_ADDR:-127.0.0.1:11020}"
+DATA_DIR="${GREPTIME_HOME}/flownode-${NODE_ID}"
+CONFIG_TEMPLATE="$(dirname "$0")/../config/flownode.toml"
+CONFIG="${DATA_DIR}/flownode.toml"
+
+mkdir -p "${DATA_DIR}"
+
+sed \
+  -e "s|__GRPC_BIND_ADDR__|${GRPC_BIND}|g" \
+  -e "s|__GRPC_SERVER_ADDR__|${GRPC_SERVER}|g" \
+  -e "s|__HTTP_ADDR__|${HTTP_ADDR}|g" \
+  -e "s|__METASRV_ADDR__|${METASRV_ADDR}|g" \
+  -e "s|__LOG_DIR__|${DATA_DIR}/logs|g" \
+  "${CONFIG_TEMPLATE}" > "${CONFIG}"
+
+exec ${GREPTIME_BIN} flownode start \
+  --config-file "${CONFIG}"

@@ -1,0 +1,53 @@
+## GreptimeDB Flownode Configuration (Template)
+## Based on: https://github.com/GreptimeTeam/greptimedb/blob/main/config/flownode.example.toml
+##
+## Placeholders (__XXX__) are replaced by the start-flownode wrapper script
+## with instance-specific values.
+
+## The flownode identifier - should be unique in the cluster.
+node_id = 0
+
+## Flow engine options.
+[flow]
+
+## The gRPC server options.
+[grpc]
+bind_addr = "__GRPC_BIND_ADDR__"
+server_addr = "__GRPC_SERVER_ADDR__"
+runtime_size = 2
+max_recv_message_size = "512MB"
+max_send_message_size = "512MB"
+
+## The HTTP server options.
+[http]
+addr = "__HTTP_ADDR__"
+timeout = "0s"
+body_limit = "64MB"
+
+## The metasrv client options.
+[meta_client]
+metasrv_addrs = ["__METASRV_ADDR__"]
+timeout = "3s"
+ddl_timeout = "10s"
+connect_timeout = "1s"
+tcp_nodelay = true
+metadata_cache_max_capacity = 100000
+metadata_cache_ttl = "10m"
+metadata_cache_tti = "5m"
+
+## The query engine options.
+[query]
+parallelism = 1
+memory_pool_size = "50%"
+
+## The logging options.
+[logging]
+dir = "__LOG_DIR__"
+level = "info"
+append_stdout = true
+log_format = "text"
+max_log_files = 720
+
+## The memory options.
+[memory]
+enable_heap_profiling = true

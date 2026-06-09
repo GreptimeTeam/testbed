@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Usage: start-frontend <node_id> <http_addr> <grpc_bind_addr> <grpc_server_addr> <mysql_addr> <postgres_addr>
+#
+# node_id           Instance identifier (0, 1, ...)
+# http_addr         HTTP address        (e.g. "0.0.0.0:11040")
+# grpc_bind_addr    gRPC bind address   (e.g. "0.0.0.0:11041")
+# grpc_server_addr  gRPC server address (e.g. "127.0.0.1:11041")
+# mysql_addr        MySQL address       (e.g. "0.0.0.0:11042")
+# postgres_addr     PostgreSQL address  (e.g. "0.0.0.0:11043")
+
+NODE_ID=$1
+HTTP_ADDR=$2
+GRPC_BIND=$3
+GRPC_SERVER=$4
+MYSQL_ADDR=$5
+POSTGRES_ADDR=$6
+
+GREPTIME_BIN="${GREPTIME_BIN:-./greptime}"
+GREPTIME_HOME="${GREPTIME_HOME:-./.greptimedb}"
+METASRV_ADDR="${METASRV_ADDR:-127.0.0.1:11020}"
+DATA_DIR="${GREPTIME_HOME}/frontend-${NODE_ID}"
+CONFIG_TEMPLATE="$(dirname "$0")/../config/frontend.toml"
+CONFIG="${DATA_DIR}/frontend.toml"
+
+mkdir -p "${DATA_DIR}"
+
+sed \
+  -e "s|__HTTP_ADDR__|${HTTP_ADDR}|g" \
+  -e "s|__GRPC_BIND_ADDR__|${GRPC_BIND}|g" \
+  -e "s|__GRPC_SERVER_ADDR__|${GRPC_SERVER}|g" \
+  -e "s|__MYSQL_ADDR__|${MYSQL_ADDR}|g" \
+  -e "s|__POSTGRES_ADDR__|${POSTGRES_ADDR}|g" \
+  -e "s|__METASRV_ADDR__|${METASRV_ADDR}|g" \
+  -e "s|__LOG_DIR__|${DATA_DIR}/logs|g" \
+  "${CONFIG_TEMPLATE}" > "${CONFIG}"
+
+exec ${GREPTIME_BIN} frontend start \
+  --config-file "${CONFIG}"

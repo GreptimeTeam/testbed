@@ -1,0 +1,189 @@
+## GreptimeDB Standalone Configuration
+## Based on: https://github.com/GreptimeTeam/greptimedb/blob/main/config/standalone.example.toml
+##
+## This is a template config. The start-standalone wrapper script generates
+## a final config by merging these settings with S3 credentials from
+## .greptimedb/s3.env.
+
+## Initialize all regions in the background during startup.
+init_regions_in_background = false
+
+## Parallelism of initializing regions.
+init_regions_parallelism = 16
+
+## The HTTP server options.
+[http]
+addr = "0.0.0.0:11070"
+timeout = "0s"
+body_limit = "64MB"
+enable_cors = true
+
+## The gRPC server options.
+[grpc]
+bind_addr = "0.0.0.0:11071"
+runtime_size = 8
+
+## MySQL server options.
+[mysql]
+enable = true
+addr = "0.0.0.0:11072"
+runtime_size = 2
+
+## PostgreSQL server options.
+[postgres]
+enable = true
+addr = "0.0.0.0:11073"
+runtime_size = 2
+
+## OpenTSDB protocol options.
+[opentsdb]
+enable = true
+
+## InfluxDB protocol options.
+[influxdb]
+enable = true
+
+## Jaeger protocol options.
+[jaeger]
+enable = true
+
+## Prometheus remote storage options.
+[prom_store]
+enable = true
+with_metric_engine = true
+
+## The WAL options.
+[wal]
+provider = "raft_engine"
+## dir is set via placeholder substitution.
+dir = "__WAL_DIR__"
+file_size = "128MB"
+purge_threshold = "1GB"
+purge_interval = "1m"
+read_batch_size = 128
+sync_write = false
+enable_log_recycle = true
+prefill_log_files = false
+sync_period = "10s"
+recovery_parallelism = 2
+
+## Metadata storage options.
+[metadata_store]
+file_size = "64MB"
+purge_threshold = "256MB"
+purge_interval = "1m"
+
+## Procedure storage options.
+[procedure]
+max_retry_times = 3
+retry_delay = "500ms"
+max_running_procedures = 128
+
+## Flow engine options.
+[flow]
+
+## The query engine options.
+[query]
+parallelism = 0
+memory_pool_size = "50%"
+
+## The data storage options.
+## Placeholders (__XXX__) are replaced by the start-standalone wrapper script
+## with values from .greptimedb/s3.env.
+[storage]
+data_home = "__DATA_HOME__"
+type = "S3"
+bucket = "__S3_BUCKET__"
+root = "__S3_ROOT__"
+endpoint = "__S3_ENDPOINT__"
+region = "__S3_REGION__"
+access_key_id = "__S3_ACCESS_KEY__"
+secret_access_key = "__S3_SECRET_KEY__"
+enable_virtual_host_style = false
+
+## The HTTP client options for S3 storage.
+[storage.http_client]
+pool_max_idle_per_host = 1024
+connect_timeout = "30s"
+timeout = "30s"
+pool_idle_timeout = "90s"
+skip_ssl_validation = false
+
+## The region engine options.
+[[region_engine]]
+
+[region_engine.mito]
+worker_channel_size = 128
+worker_request_batch_size = 64
+manifest_checkpoint_distance = 10
+compress_manifest = false
+auto_flush_interval = "1h"
+enable_write_cache = false
+write_cache_size = "5GiB"
+preload_index_cache = true
+index_cache_percent = 20
+enable_refill_cache_on_read = true
+manifest_cache_size = "256MB"
+sst_write_buffer_size = "8MB"
+max_concurrent_scan_files = 384
+allow_stale_entries = false
+scan_memory_limit = "unlimited"
+scan_memory_on_exhausted = "fail"
+min_compaction_interval = "0m"
+default_flat_format = true
+
+[region_engine.mito.index]
+staging_size = "2GB"
+staging_ttl = "7d"
+metadata_cache_size = "64MiB"
+content_cache_size = "128MiB"
+content_cache_page_size = "64KiB"
+result_cache_size = "128MiB"
+
+[region_engine.mito.inverted_index]
+create_on_flush = "auto"
+create_on_compaction = "auto"
+apply_on_query = "auto"
+mem_threshold_on_create = "auto"
+
+[region_engine.mito.fulltext_index]
+create_on_flush = "auto"
+create_on_compaction = "auto"
+apply_on_query = "auto"
+mem_threshold_on_create = "auto"
+
+[region_engine.mito.bloom_filter_index]
+create_on_flush = "auto"
+create_on_compaction = "auto"
+apply_on_query = "auto"
+mem_threshold_on_create = "auto"
+
+[region_engine.mito.gc]
+enable = false
+lingering_time = "1m"
+
+[[region_engine]]
+[region_engine.file]
+
+[[region_engine]]
+[region_engine.metric]
+sparse_primary_key_encoding = true
+
+## The logging options.
+[logging]
+dir = "__LOG_DIR__"
+level = "info"
+append_stdout = true
+log_format = "text"
+max_log_files = 720
+
+## The slow query log options.
+[slow_query]
+enable = true
+record_type = "system_table"
+threshold = "30s"
+sample_ratio = 1.0
+
+## The memory options.
+[memory]
+enable_heap_profiling = true

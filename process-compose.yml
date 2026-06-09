@@ -30,7 +30,6 @@ processes:
 
   garage:
     command: |
-      rm -rf {{.GREPTIME_HOME}}/garage
       garage -c garage.toml server
     readiness_probe:
       exec:
@@ -56,23 +55,7 @@ processes:
 
   metasrv:
     command: |
-      mkdir -p {{.GREPTIME_HOME}}/meta
-      cat > {{.GREPTIME_HOME}}/meta/metasrv.toml <<EOF
-      data_home = "{{.GREPTIME_HOME}}/meta"
-
-      [grpc]
-      bind_addr = "0.0.0.0:11020"
-      server_addr = "127.0.0.1:11020"
-
-      [http]
-      addr = "0.0.0.0:11021"
-
-      [logging]
-      dir = "{{.GREPTIME_HOME}}/meta/logs"
-      EOF
-      {{.GREPTIME_BIN}} metasrv start \
-        --config-file {{.GREPTIME_HOME}}/meta/metasrv.toml \
-        --store-addrs=127.0.0.1:11001
+      GREPTIME_BIN={{.GREPTIME_BIN}} GREPTIME_HOME={{.GREPTIME_HOME}} scripts/start-metasrv 0 0.0.0.0:11020 127.0.0.1:11020 0.0.0.0:11021
     depends_on:
       etcd:
         condition: process_healthy
@@ -89,23 +72,7 @@ processes:
 
   metasrv-1:
     command: |
-      mkdir -p {{.GREPTIME_HOME}}/meta-1
-      cat > {{.GREPTIME_HOME}}/meta-1/metasrv.toml <<EOF
-      data_home = "{{.GREPTIME_HOME}}/meta-1"
-
-      [grpc]
-      bind_addr = "0.0.0.0:11022"
-      server_addr = "127.0.0.1:11022"
-
-      [http]
-      addr = "0.0.0.0:11023"
-
-      [logging]
-      dir = "{{.GREPTIME_HOME}}/meta-1/logs"
-      EOF
-      {{.GREPTIME_BIN}} metasrv start \
-        --config-file {{.GREPTIME_HOME}}/meta-1/metasrv.toml \
-        --store-addrs=127.0.0.1:11001
+      GREPTIME_BIN={{.GREPTIME_BIN}} GREPTIME_HOME={{.GREPTIME_HOME}} scripts/start-metasrv 1 0.0.0.0:11022 127.0.0.1:11022 0.0.0.0:11023
     depends_on:
       etcd:
         condition: process_healthy
@@ -160,28 +127,7 @@ processes:
 
   frontend:
     command: |
-      mkdir -p {{.GREPTIME_HOME}}/frontend/logs
-      cat > {{.GREPTIME_HOME}}/frontend/frontend.toml <<EOF
-      [http]
-      addr = "0.0.0.0:11040"
-
-      [grpc]
-      bind_addr = "0.0.0.0:11041"
-
-      [mysql]
-      addr = "0.0.0.0:11042"
-
-      [postgres]
-      addr = "0.0.0.0:11043"
-
-      [meta_client]
-      metasrv_addrs = ["{{.METASRV_ADDR}}"]
-
-      [logging]
-      dir = "{{.GREPTIME_HOME}}/frontend/logs"
-      EOF
-      {{.GREPTIME_BIN}} frontend start \
-        --config-file {{.GREPTIME_HOME}}/frontend/frontend.toml
+      GREPTIME_BIN={{.GREPTIME_BIN}} GREPTIME_HOME={{.GREPTIME_HOME}} METASRV_ADDR={{.METASRV_ADDR}} scripts/start-frontend 0 0.0.0.0:11040 0.0.0.0:11041 127.0.0.1:11041 0.0.0.0:11042 0.0.0.0:11043
     depends_on:
       metasrv:
         condition: process_healthy
@@ -202,28 +148,7 @@ processes:
 
   frontend-1:
     command: |
-      mkdir -p {{.GREPTIME_HOME}}/frontend-1/logs
-      cat > {{.GREPTIME_HOME}}/frontend-1/frontend.toml <<EOF
-      [http]
-      addr = "0.0.0.0:11044"
-
-      [grpc]
-      bind_addr = "0.0.0.0:11045"
-
-      [mysql]
-      addr = "0.0.0.0:11046"
-
-      [postgres]
-      addr = "0.0.0.0:11047"
-
-      [meta_client]
-      metasrv_addrs = ["{{.METASRV_ADDR}}"]
-
-      [logging]
-      dir = "{{.GREPTIME_HOME}}/frontend-1/logs"
-      EOF
-      {{.GREPTIME_BIN}} frontend start \
-        --config-file {{.GREPTIME_HOME}}/frontend-1/frontend.toml
+      GREPTIME_BIN={{.GREPTIME_BIN}} GREPTIME_HOME={{.GREPTIME_HOME}} METASRV_ADDR={{.METASRV_ADDR}} scripts/start-frontend 1 0.0.0.0:11044 0.0.0.0:11045 127.0.0.1:11045 0.0.0.0:11046 0.0.0.0:11047
     depends_on:
       metasrv:
         condition: process_healthy
@@ -261,24 +186,7 @@ processes:
 
   flownode:
     command: |
-      mkdir -p {{.GREPTIME_HOME}}/flownode/logs
-      cat > {{.GREPTIME_HOME}}/flownode/flownode.toml <<EOF
-      node_id = 0
-
-      [grpc]
-      bind_addr = "0.0.0.0:11060"
-
-      [http]
-      addr = "0.0.0.0:11061"
-
-      [meta_client]
-      metasrv_addrs = ["{{.METASRV_ADDR}}"]
-
-      [logging]
-      dir = "{{.GREPTIME_HOME}}/flownode/logs"
-      EOF
-      {{.GREPTIME_BIN}} flownode start \
-        --config-file {{.GREPTIME_HOME}}/flownode/flownode.toml
+      GREPTIME_BIN={{.GREPTIME_BIN}} GREPTIME_HOME={{.GREPTIME_HOME}} METASRV_ADDR={{.METASRV_ADDR}} scripts/start-flownode 0 0.0.0.0:11060 127.0.0.1:11060 0.0.0.0:11061
     depends_on:
       metasrv:
         condition: process_healthy

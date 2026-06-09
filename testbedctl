@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROJ_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+usage() {
+  cat <<EOF
+Usage: testbedctl <command> [args...]
+
+Commands:
+  psql          Connect to GreptimeDB via PostgreSQL protocol
+  mysql         Connect to GreptimeDB via MySQL protocol
+  s3  [args..]  Run aws s3 against Garage (auto-sources credentials)
+  telemetrygen Start telemetrygen trace ingestion
+  prometheus    Start Prometheus + node-exporter
+  help          Show this help
+EOF
+}
+
+source_s3_env() {
+  local s3_env="${PROJ_DIR}/.greptimedb/s3.env"
+  if [ -f "$s3_env" ]; then
+    # shellcheck disable=SC1090
+    . "$s3_env"
+  else
+    echo "WARNING: ${s3_env} not found. Run the cluster first." >&2
+  fi
+}
+
+cmd_psql() {
+  exec psql -h 127.0.0.1 -p 11053 -d public -U root "$@"
+}
+
+cmd_mysql() {
+  exec mysql -h 127.0.0.1 -P 11052 -u root "$@"
+}
+
+cmd_s3() {
+  source_s3_env
+  exec aws s3 "$@"
+}
+
+cmd_telemetrygen() {
+  exec podman-compose -f "${PROJ_DIR}/datasources/telemetrygen/compose.yaml" up "$@"
+}
+
+cmd_prometheus() {
+  exec podman-compose -f "${PROJ_DIR}/datasources/prometheus/compose.yaml" "$@"
+}
+
+case "${1:-help}" in
+  psql)         shift; cmd_psql "$@" ;;
+  mysql)        shift; cmd_mysql "$@" ;;
+  s3)           shift; cmd_s3 "$@" ;;
+  telemetrygen) shift; cmd_telemetrygen "$@" ;;
+  prometheus)   shift; cmd_prometheus "$@" ;;
+  help|--help|-h)
+    usage
+    ;;
+  *)
+    echo "Unknown command: $1" >&2
+    usage >&2
+    exit 1
+    ;;
+esac
