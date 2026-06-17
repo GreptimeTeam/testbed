@@ -13,6 +13,9 @@ Commands:
   s3  [args..]  Run aws s3 against Garage (auto-sources credentials)
   telemetrygen Start telemetrygen trace ingestion
   prometheus    Start Prometheus + node-exporter
+  duckdb        Open DuckDB shell with Iceberg REST catalog attached
+  pyiceberg     Query Iceberg tables via pyiceberg
+  clean         Remove .greptimedb directory
   help          Show this help
 EOF
 }
@@ -48,12 +51,70 @@ cmd_prometheus() {
   exec podman-compose -f "${PROJ_DIR}/datasources/prometheus/compose.yaml" "$@"
 }
 
+cmd_duckdb() {
+  source_s3_env
+  local init_file
+  init_file=$(mktemp)
+  cat > "$init_file" <<DUCKINIT
+SET autoinstall_known_extensions=1;
+SET autoload_known_extensions=1;
+FORCE INSTALL iceberg;
+LOAD iceberg;
+INSTALL httpfs;
+LOAD httpfs;
+SET s3_endpoint='127.0.0.1:11010';
+SET s3_access_key_id='${S3_ACCESS_KEY}';
+SET s3_secret_access_key='${S3_SECRET_KEY}';
+SET s3_region='garage';
+SET s3_use_ssl=false;
+SET s3_url_style='path';
+
+-- Iceberg REST catalog (SHOW ALL TABLES works)
+ATTACH 'greptime' AS iceberg_cat (
+    TYPE iceberg,
+    ENDPOINT 'http://127.0.0.1:11040/v1/iceberg',
+    AUTHORIZATION_TYPE 'none'
+);
+
+-- Workaround: query via read_parquet (DuckDB REST catalog client
+-- has a bug with manifest path resolution in v1.5.2)
+CREATE OR REPLACE VIEW otel_traces AS
+  SELECT * FROM read_parquet(
+    's3://test-bucket/data/data/greptime/public/*/*/*.parquet',
+    union_by_name=true
+  );
+DUCKINIT
+  echo "==> Iceberg catalog 'greptime' attached as 'iceberg_cat'"
+  echo "==> Try:  SHOW ALL TABLES;"
+  echo "==> Try:  SELECT * FROM otel_traces LIMIT 10;"
+  echo "==> Try:  SELECT count(*) FROM otel_traces;"
+  echo
+  exec duckdb -init "$init_file" "$@"
+}
+
+cmd_pyiceberg() {
+  source_s3_env
+  exec python3 "${PROJ_DIR}/scripts/read_iceberg.py" "$@"
+}
+
+cmd_clean() {
+  if [ -d "${PROJ_DIR}/.greptimedb" ]; then
+    rm -rf "${PROJ_DIR}/.greptimedb"
+    echo "==> Removed .greptimedb"
+  else
+    echo "==> .greptimedb not found, nothing to clean."
+  fi
+}
+
 case "${1:-help}" in
   psql)         shift; cmd_psql "$@" ;;
   mysql)        shift; cmd_mysql "$@" ;;
   s3)           shift; cmd_s3 "$@" ;;
   telemetrygen) shift; cmd_telemetrygen "$@" ;;
   prometheus)   shift; cmd_prometheus "$@" ;;
+  duckdb)       shift; cmd_duckdb "$@" ;;
+  pyiceberg)    shift; cmd_pyiceberg "$@" ;;
+  clean)        cmd_clean ;;
   help|--help|-h)
     usage
     ;;

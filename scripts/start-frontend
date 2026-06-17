@@ -24,6 +24,8 @@ DATA_DIR="${GREPTIME_HOME}/frontend-${NODE_ID}"
 CONFIG_TEMPLATE="$(dirname "$0")/../config/frontend.toml"
 CONFIG="${DATA_DIR}/frontend.toml"
 
+source "${GREPTIME_HOME}/s3.env"
+
 mkdir -p "${DATA_DIR}"
 
 sed \
@@ -33,6 +35,13 @@ sed \
   -e "s|__MYSQL_ADDR__|${MYSQL_ADDR}|g" \
   -e "s|__POSTGRES_ADDR__|${POSTGRES_ADDR}|g" \
   -e "s|__METASRV_ADDR__|${METASRV_ADDR}|g" \
+  -e "s|__DATA_HOME__|${DATA_DIR}|g" \
+  -e "s|__S3_BUCKET__|${S3_BUCKET}|g" \
+  -e "s|__S3_ROOT__|data|g" \
+  -e "s|__S3_ENDPOINT__|${S3_ENDPOINT_URL}|g" \
+  -e "s|__S3_REGION__|${S3_REGION}|g" \
+  -e "s|__S3_ACCESS_KEY__|${S3_ACCESS_KEY}|g" \
+  -e "s|__S3_SECRET_KEY__|${S3_SECRET_KEY}|g" \
   -e "s|__LOG_DIR__|${DATA_DIR}/logs|g" \
   "${CONFIG_TEMPLATE}" > "${CONFIG}"
 

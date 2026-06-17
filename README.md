@@ -58,6 +58,7 @@ A utility script for common operations against the running cluster:
 ./testbedctl telemetrygen down              # Stop trace ingestion
 ./testbedctl prometheus up -d               # Start Prometheus + node-exporter
 ./testbedctl prometheus down                # Stop Prometheus
+./testbedctl clean                          # Remove .greptimedb
 ```
 
 ## Start Extra Processes
@@ -72,5 +73,5 @@ process-compose process start flownode
 
 ```bash
 process-compose down
-rm -rf .greptimedb
+./testbedctl clean
 ```

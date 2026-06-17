@@ -141,3 +141,6 @@ max_log_files = 720
 ## The memory options.
 [memory]
 enable_heap_profiling = true
+
+[[plugins]]
+iceberg_manifest = { warehouse_root = "iceberg_warehouse" }

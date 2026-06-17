@@ -17,6 +17,12 @@
           stdenv.cc.cc.lib
         ];
         lib = nixpkgs.lib;
+        pythonEnv = pkgs.python313.withPackages (ps: [
+          ps.pyiceberg
+          ps.pyarrow
+          ps.boto3
+          ps.fastavro
+        ]);
       in
       {
         devShells.default = pkgs.mkShell {
@@ -34,6 +40,8 @@
             etcd
             haproxy
             awscli2
+            duckdb
+            pythonEnv
           ];
 
           buildInputs = buildInputs;

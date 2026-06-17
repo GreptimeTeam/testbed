@@ -88,3 +88,17 @@ ttl = "90d"
 ## The memory options.
 [memory]
 enable_heap_profiling = true
+
+[storage]
+data_home = "__DATA_HOME__"
+type = "S3"
+bucket = "__S3_BUCKET__"
+root = "__S3_ROOT__"
+endpoint = "__S3_ENDPOINT__"
+region = "__S3_REGION__"
+access_key_id = "__S3_ACCESS_KEY__"
+secret_access_key = "__S3_SECRET_KEY__"
+enable_virtual_host_style = false
+
+[[plugins]]
+iceberg_manifest = { warehouse_root = "iceberg_warehouse" }

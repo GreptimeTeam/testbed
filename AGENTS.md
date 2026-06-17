@@ -147,11 +147,12 @@ rm -rf .greptimedb                            # clean all data
 ./testbedctl telemetrygen down                 # stop trace ingestion
 ./testbedctl prometheus up                     # start Prometheus + node-exporter
 ./testbedctl prometheus down                   # stop Prometheus + node-exporter
+./testbedctl clean                              # remove .greptimedb (full data reset)
 ```
 
 ## Common Tasks
 
-- **Reset cluster**: `process-compose down && rm -rf .greptimedb && process-compose up haproxy`
+- **Reset cluster**: `process-compose down && ./testbedctl clean && process-compose up haproxy`
 - **Resume cluster**: `process-compose up haproxy` (preserves data if `.greptimedb` is not deleted; garage-setup will reuse existing credentials)
 - **Change greptime binary**: replace `./greptime` or set `GREPTIME_BIN` in `process-compose.yml` vars
 - **Adjust ports**: edit `process-compose.yml` (process ports) and `haproxy.cfg` (proxy ports)
