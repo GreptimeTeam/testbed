@@ -210,7 +210,21 @@ processes:
         condition: process_completed_successfully
     readiness_probe:
       exec:
-        command: "curl -sf http://127.0.0.1:11070/health"
+        command: "curl -sf http://127.0.0.1:11040/health"
+      initial_delay_seconds: 2
+      period_seconds: 3
+      timeout_seconds: 3
+    availability:
+      restart: on_failure
+      max_restarts: 5
+    disabled: true
+
+  standalone-fs:
+    command: |
+      GREPTIME_HOME={{.GREPTIME_HOME}} GREPTIME_BIN={{.GREPTIME_BIN}} scripts/start-standalone-fs
+    readiness_probe:
+      exec:
+        command: "curl -sf http://127.0.0.1:11040/health"
       initial_delay_seconds: 2
       period_seconds: 3
       timeout_seconds: 3

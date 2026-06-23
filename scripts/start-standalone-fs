@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+GREPTIME_BIN="${GREPTIME_BIN:-./greptime}"
+GREPTIME_HOME="${GREPTIME_HOME:-./.greptimedb}"
+DATA_DIR="${GREPTIME_HOME}/standalone-fs"
+CONFIG_TEMPLATE="$(dirname "$0")/../config/standalone-fs.toml"
+CONFIG="${DATA_DIR}/standalone-fs.toml"
+
+# No S3 credentials needed for the File backend — data lives on local disk.
+mkdir -p "${DATA_DIR}"
+
+# Generate standalone-fs config from template by substituting the local
+# path placeholders. No object-store placeholders are required.
+sed \
+  -e "s|__DATA_HOME__|${DATA_DIR}|g" \
+  -e "s|__WAL_DIR__|${DATA_DIR}/wal|g" \
+  -e "s|__LOG_DIR__|${DATA_DIR}/logs|g" \
+  "${CONFIG_TEMPLATE}" > "${CONFIG}"
+
+exec ${GREPTIME_BIN} standalone start \
+  --config-file "${CONFIG}"

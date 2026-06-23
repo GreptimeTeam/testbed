@@ -24,10 +24,18 @@ process-compose up standalone
 
 | Protocol | Address |
 |---|---|
-| HTTP | `http://127.0.0.1:11070` |
-| gRPC | `127.0.0.1:11071` |
-| MySQL | `127.0.0.1:11072` |
-| PostgreSQL | `127.0.0.1:11073` |
+| HTTP | `http://127.0.0.1:11040` |
+| gRPC | `127.0.0.1:11041` |
+| MySQL | `127.0.0.1:11042` |
+| PostgreSQL | `127.0.0.1:11043` |
+
+### GreptimeDB Standalone (Local File Backend)
+
+```bash
+process-compose up standalone-fs
+```
+
+Single-node GreptimeDB using **local disk** instead of Garage S3. No garage/etcd dependency — fastest mode to start. Data lives under `.greptimedb/standalone-fs/`. Same connection details as standalone above.
 
 ### GreptimeDB Distributed Cluster
 

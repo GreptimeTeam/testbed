@@ -14,7 +14,7 @@ Commands:
   telemetrygen Start telemetrygen trace ingestion
   prometheus    Start Prometheus + node-exporter
   duckdb        Open DuckDB shell with Iceberg REST catalog attached
-  pyiceberg     Query Iceberg tables via pyiceberg
+  pyiceberg     Query Iceberg tables via pyiceberg (use -local for standalone-fs)
   clean         Remove .greptimedb directory
   help          Show this help
 EOF
@@ -93,6 +93,10 @@ DUCKINIT
 }
 
 cmd_pyiceberg() {
+  if [ "${1:-}" = "-local" ] || [ "${1:-}" = "--local" ]; then
+    echo "==> pyiceberg LOCAL mode (standalone-fs, no S3)"
+    exec python3 "${PROJ_DIR}/scripts/read_iceberg.py" "$@"
+  fi
   source_s3_env
   exec python3 "${PROJ_DIR}/scripts/read_iceberg.py" "$@"
 }

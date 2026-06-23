@@ -12,6 +12,7 @@ config/               GreptimeDB component TOML templates (use __PLACEHOLDER__ v
   frontend.toml         Frontend template (http, grpc, mysql, postgres, meta_client)
   datanode.toml         Datanode template (S3 storage, WAL, region engines)
   standalone.toml       Standalone template (all-in-one with S3 storage)
+  standalone-fs.toml    Standalone template (all-in-one with local File storage)
   flownode.toml         Flownode template (flow engine, grpc, http)
 haproxy.cfg           Proxy routing HTTP/gRPC/MySQL/PostgreSQL to the frontend
 garage.toml           Garage S3-compatible storage config
@@ -22,6 +23,7 @@ scripts/
   start-datanode        Wrapper: generates datanode config from template with S3 creds, starts datanode
   start-flownode        Wrapper: generates flownode config from template, starts flownode
   start-standalone      Wrapper: generates standalone config from template with S3 creds
+  start-standalone-fs   Wrapper: generates standalone-fs config from template (local File backend, no S3)
   garage-local          Standalone garage launcher (not used by process-compose)
 .env                  Process-compose env vars (PC_PORT_NUM)
 .greptimedb/          Runtime data (gitignored), created on first start
@@ -49,6 +51,14 @@ process-compose up standalone
 ```
 
 Starts garage → garage-setup → standalone.
+
+### GreptimeDB Standalone (Local File Backend)
+
+```bash
+process-compose up standalone-fs
+```
+
+Single-node GreptimeDB using **local disk** instead of Garage S3. No dependencies — starts immediately without garage/etcd. Data lives under `.greptimedb/standalone-fs/`. Reuses ports 11040-11043. Fastest way to iterate on GreptimeDB itself.
 
 ### GreptimeDB Distributed Cluster
 
@@ -84,7 +94,8 @@ etcd -> metasrv -> datanode-{0,1} -> frontend -> haproxy
 - **metasrv-1**: second metasrv instance (port 11022 gRPC, 11023 HTTP)
 - **frontend-1**: second frontend instance (ports 11044-11047 for HTTP/gRPC/MySQL/PostgreSQL)
 - **flownode**: flow engine (port 11060 gRPC, 11061 HTTP)
-- **standalone**: single-node GreptimeDB using garage for object storage (ports 11070-11073 for HTTP/gRPC/MySQL/PostgreSQL)
+- **standalone**: single-node GreptimeDB using garage for object storage (reuses frontend ports 11040-11043 for HTTP/gRPC/MySQL/PostgreSQL, since standalone and the distributed cluster are never run simultaneously)
+- **standalone-fs**: single-node GreptimeDB using **local disk** (File backend) instead of Garage S3. Fastest/lightest mode: no object store, no garage dependency, data lives under `.greptimedb/standalone-fs/`. Reuses the same ports 11040-11043.
 
 Start optional processes with:
 ```bash
@@ -104,7 +115,7 @@ Via haproxy (distributed cluster):
 
 Direct to frontend (bypass haproxy): ports 11040-11043.
 
-Standalone (when started): ports 11070-11073.
+Standalone (when started): reuses the same ports 11040-11043, so all client code (e.g. `scripts/read_iceberg.py`) works identically in either mode.
 
 ## Port Allocation
 
@@ -121,7 +132,7 @@ Standalone (when started): ports 11070-11073.
 | frontend-1 | 11044 (HTTP), 11045 (gRPC), 11046 (MySQL), 11047 (PostgreSQL) |
 | haproxy | 11050 (HTTP), 11051 (gRPC), 11052 (MySQL), 11053 (PostgreSQL) |
 | flownode | 11060 (gRPC), 11061 (HTTP) |
-| standalone | 11070 (HTTP), 11071 (gRPC), 11072 (MySQL), 11073 (PostgreSQL) |
+| standalone | 11040 (HTTP), 11041 (gRPC), 11042 (MySQL), 11043 (PostgreSQL) — shared with frontend |
 | prometheus | 11080 (HTTP UI) |
 
 ## Useful Commands

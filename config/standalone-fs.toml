@@ -1,9 +1,13 @@
-## GreptimeDB Standalone Configuration
+## GreptimeDB Standalone Configuration (Local File Backend)
 ## Based on: https://github.com/GreptimeTeam/greptimedb/blob/main/config/standalone.example.toml
 ##
-## This is a template config. The start-standalone wrapper script generates
-## a final config by merging these settings with S3 credentials from
-## .greptimedb/s3.env.
+## Same as standalone.toml but uses the local File storage backend instead
+## of Garage S3. This is the fastest/lightest way to run GreptimeDB: no
+## object store, no network, data lives on local disk under GREPTIME_HOME.
+##
+## This is a template config. The start-standalone-fs wrapper script
+## generates a final config by substituting the local-path placeholders
+## (__DATA_HOME__, __WAL_DIR__, __LOG_DIR__). No S3 credentials are needed.
 
 ## Initialize all regions in the background during startup.
 init_regions_in_background = false
@@ -88,26 +92,11 @@ parallelism = 0
 memory_pool_size = "50%"
 
 ## The data storage options.
-## Placeholders (__XXX__) are replaced by the start-standalone wrapper script
-## with values from .greptimedb/s3.env.
+## Uses the local File backend: data is stored on disk under data_home
+## (no S3/object store). Only the data_home placeholder needs substitution.
 [storage]
 data_home = "__DATA_HOME__"
-type = "S3"
-bucket = "__S3_BUCKET__"
-root = "__S3_ROOT__"
-endpoint = "__S3_ENDPOINT__"
-region = "__S3_REGION__"
-access_key_id = "__S3_ACCESS_KEY__"
-secret_access_key = "__S3_SECRET_KEY__"
-enable_virtual_host_style = false
-
-## The HTTP client options for S3 storage.
-[storage.http_client]
-pool_max_idle_per_host = 1024
-connect_timeout = "30s"
-timeout = "30s"
-pool_idle_timeout = "90s"
-skip_ssl_validation = false
+type = "File"
 
 ## The region engine options.
 [[region_engine]]
@@ -192,5 +181,7 @@ enable_heap_profiling = true
 ## Iceberg manifest export writes Iceberg-format metadata (snapshots,
 ## manifests, manifest-lists) so external engines (pyiceberg, Trino,
 ## Spark, etc.) can query GreptimeDB tables via the Iceberg REST catalog.
+## With the File backend, the warehouse_root resolves under data_home
+## (i.e. GREPTIME_HOME/standalone-fs/iceberg_warehouse/).
 [[plugins]]
 iceberg_manifest = { warehouse_root = "iceberg_warehouse" }
