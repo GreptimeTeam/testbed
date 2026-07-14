@@ -11,15 +11,20 @@ Two modes:
 
 Usage:
     # S3 mode (default): requires .greptimedb/s3.env
-    python3 scripts/read_iceberg.py
+    python3 scripts/read_iceberg.py [TABLE] [-local]
 
     # Local File mode: for standalone-fs
-    python3 scripts/read_iceberg.py -local
+    python3 scripts/read_iceberg.py -local [TABLE]
+
+    TABLE is an optional positional argument naming the table to query
+    (default: opentelemetry_traces4). Works for any Iceberg-exposed table,
+    regardless of schema (display is generic: sorts by `timestamp` if present,
+    then shows all columns).
 
 Optional env vars:
     ICEBERG_CATALOG_URI   REST catalog URI (default http://127.0.0.1:11040/v1/iceberg)
     ICEBERG_CATALOG       catalog prefix   (default greptime)
-    ICEBERG_TABLE         table to query   (default opentelemetry_traces4)
+    ICEBERG_TABLE         table to query   (overridden by the TABLE arg)
 """
 
 import argparse
@@ -42,6 +47,10 @@ TABLE_NAME = os.environ.get("ICEBERG_TABLE", "opentelemetry_traces4")
 
 def parse_args():
     p = argparse.ArgumentParser(description="Query GreptimeDB Iceberg tables via the REST catalog.")
+    p.add_argument(
+        "table", nargs="?", default=os.environ.get("ICEBERG_TABLE", "opentelemetry_traces4"),
+        help="Table name to query (default: opentelemetry_traces4, or $ICEBERG_TABLE).",
+    )
     p.add_argument(
         "-local", "--local", dest="local", action="store_true",
         help="Read parquet data from the local filesystem (standalone-fs mode); "
@@ -72,9 +81,53 @@ def local_path(file_path: str) -> str:
     return file_path
 
 
+def normalize_dictionary_columns(table: pa.Table) -> pa.Table:
+    """Compatibility layer: cast dictionary-encoded columns to their underlying
+    value type so tables written with different physical encodings can be
+    concatenated.
+
+    GreptimeDB writes the ARROW:schema parquet annotation, which pyarrow honors.
+    As a result a column that is physically dictionary-encoded (e.g.
+    `__primary_key` as `dictionary<values=binary, indices=uint32>`) is exposed
+    as a dictionary type. Different flushes/compactions may encode the same
+    column differently (plain `binary` in one file, `dictionary<binary>` in
+    another), which makes `pa.concat_tables` fail with a schema mismatch.
+
+    Casting every dictionary<T> column to T here makes all files consistent,
+    independent of how each parquet writer happened to encode the column. This
+    is a pure read-side fix and does not touch the underlying data. Most major
+    Iceberg consumers (Spark, Trino, DuckDB) are unaffected by this because
+    they ignore the ARROW:schema annotation; this normalizes it for pyarrow.
+    """
+    new_fields = []
+    changed = False
+    for field in table.schema:
+        if pa.types.is_dictionary(field.type):
+            new_fields.append(field.with_type(field.type.value_type))
+            changed = True
+        else:
+            new_fields.append(field)
+    if not changed:
+        return table
+    return table.cast(pa.schema(new_fields))
+
+
+def concat_tables_compat(tables):
+    """Concatenate tables, tolerating per-file type drift.
+
+    Each table is first normalized (dictionary -> value type, see above), then
+    concatenated with `promote_options="default"` so any remaining type
+    differences (e.g. timestamp precision `ns` vs `ms`) are reconciled to a
+    common type instead of raising.
+    """
+    normalized = [normalize_dictionary_columns(t) for t in tables]
+    return pa.concat_tables(normalized, promote_options="default")
+
+
 def main():
     args = parse_args()
     LOCAL = args.local
+    TABLE_NAME = args.table
 
     # ── Set up file IO and REST catalog based on mode ──
     if LOCAL:
@@ -143,33 +196,32 @@ def main():
     print()
 
     # ── Query: read data from parquet files ──
-    # Equivalent to:
-    #   SELECT service_name, span_name, trace_id, span_id, parent_span_id,
-    #          duration_nano, span_kind, timestamp
-    #   FROM <TABLE_NAME>
-    #   ORDER BY timestamp DESC
-    #   LIMIT 10;
-    print("--- Query: recently ingested traces ---")
+    print(f"--- Query: recent rows from {TABLE_NAME} (LIMIT 10) ---")
 
-    iceberg_col_names = {f.name for f in iceberg_schema.fields}
+    iceberg_col_names = [f.name for f in iceberg_schema.fields]
+    iceberg_col_set = set(iceberg_col_names)
 
     def read_parquet_file(file_path: str) -> pa.Table:
         """Read a parquet file, selecting only Iceberg schema columns."""
         if LOCAL:
-            return pq.read_table(local_path(file_path), columns=list(iceberg_col_names))
-        # S3 mode: download then read
-        with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as tmp:
-            tmp_path = tmp.name
-        subprocess.run(
-            ["aws", "s3", "cp", file_path, tmp_path,
-             "--endpoint-url", s3_props["s3.endpoint"],
-             "--region", s3_props["s3.region"]],
-            check=True, capture_output=True,
-        )
-        try:
-            return pq.read_table(tmp_path, columns=list(iceberg_col_names))
-        finally:
-            os.unlink(tmp_path)
+            tbl = pq.read_table(local_path(file_path), columns=iceberg_col_names)
+        else:
+            # S3 mode: download then read
+            with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as tmp:
+                tmp_path = tmp.name
+            subprocess.run(
+                ["aws", "s3", "cp", file_path, tmp_path,
+                 "--endpoint-url", s3_props["s3.endpoint"],
+                 "--region", s3_props["s3.region"]],
+                check=True, capture_output=True,
+            )
+            try:
+                tbl = pq.read_table(tmp_path, columns=iceberg_col_names)
+            finally:
+                os.unlink(tmp_path)
+        # Compatibility layer: normalize dictionary encodings so files with
+        # differing physical encodings can be concatenated later.
+        return normalize_dictionary_columns(tbl)
 
     tables = []
     with ThreadPoolExecutor(max_workers=4) as executor:
@@ -183,21 +235,32 @@ def main():
                 print(f"  WARN: {os.path.basename(fp)}: {e}")
 
     if tables:
-        combined = pa.concat_tables(tables)
-        sort_idx = pc.array_sort_indices(combined["timestamp"], order="descending")
-        top10 = combined.take(sort_idx[:10])
+        combined = concat_tables_compat(tables)
 
-        cols = ["service_name", "span_name", "trace_id", "span_id",
-                "parent_span_id", "duration_nano", "span_kind", "timestamp"]
-        for i in range(len(top10)):
-            row = {}
-            for c in cols:
-                v = top10.column(c)[i]
+        # Generic display: sort by `timestamp` descending if present, else
+        # leave rows in file order; then take the first LIMIT rows.
+        LIMIT = 10
+        VALUE_WIDTH = 50
+        sort_col = "timestamp" if "timestamp" in combined.column_names else None
+        if sort_col:
+            sort_idx = pc.array_sort_indices(combined[sort_col], order="descending")
+            top = combined.take(sort_idx[:LIMIT])
+        else:
+            top = combined.slice(0, LIMIT)
+
+        def fmt_scalar(v):
+            try:
+                s = str(v.as_py())
+            except ValueError:
+                # nanosecond timestamp without pandas: fall back to raw int
                 try:
-                    s = str(v.as_py())[:66]
-                except ValueError:
-                    s = str(v.cast(pa.int64()).as_py())[:66]
-                row[c] = s
+                    s = str(v.cast(pa.int64()).as_py())
+                except Exception:
+                    s = str(v)
+            return s[:VALUE_WIDTH]
+
+        for i in range(len(top)):
+            row = {c: fmt_scalar(top.column(c)[i]) for c in top.column_names}
             print(f"  {row}")
         print(f"  ({combined.num_rows} total rows)")
     else:

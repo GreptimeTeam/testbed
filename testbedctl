@@ -14,7 +14,11 @@ Commands:
   telemetrygen Start telemetrygen trace ingestion
   prometheus    Start Prometheus + node-exporter
   duckdb        Open DuckDB shell with Iceberg REST catalog attached
-  pyiceberg     Query Iceberg tables via pyiceberg (use -local for standalone-fs)
+  pyiceberg [table] [-local]
+                Query Iceberg tables via pyiceberg.
+                Pass a table name (default: opentelemetry_traces4).
+                Use -local for standalone-fs (local filesystem, no S3).
+  flush <table> Flush a table's memtable (admin flush_table) to trigger manifest export
   clean         Remove .greptimedb directory
   help          Show this help
 EOF
@@ -32,6 +36,18 @@ source_s3_env() {
 
 cmd_psql() {
   exec psql -h 127.0.0.1 -p 11053 -d public -U root "$@"
+}
+
+cmd_flush() {
+  local table="${1:-}"
+  if [ -z "$table" ]; then
+    echo "Usage: testbedctl flush <table_name>" >&2
+    exit 1
+  fi
+  # Connect directly to the frontend/standalone (port 11043) so this works
+  # for standalone, standalone-fs, and the distributed cluster alike.
+  exec psql -h 127.0.0.1 -p 11043 -d public -U root \
+    -c "admin flush_table('${table}');"
 }
 
 cmd_mysql() {
@@ -93,11 +109,20 @@ DUCKINIT
 }
 
 cmd_pyiceberg() {
-  if [ "${1:-}" = "-local" ] || [ "${1:-}" = "--local" ]; then
+  # Scan all args for the -local flag so the table name can appear in any
+  # position (e.g. `pyiceberg my_table -local` or `pyiceberg -local my_table`).
+  local local_mode=false
+  for a in "$@"; do
+    if [ "$a" = "-local" ] || [ "$a" = "--local" ]; then
+      local_mode=true
+      break
+    fi
+  done
+  if [ "$local_mode" = true ]; then
     echo "==> pyiceberg LOCAL mode (standalone-fs, no S3)"
-    exec python3 "${PROJ_DIR}/scripts/read_iceberg.py" "$@"
+  else
+    source_s3_env
   fi
-  source_s3_env
   exec python3 "${PROJ_DIR}/scripts/read_iceberg.py" "$@"
 }
 
@@ -118,6 +143,7 @@ case "${1:-help}" in
   prometheus)   shift; cmd_prometheus "$@" ;;
   duckdb)       shift; cmd_duckdb "$@" ;;
   pyiceberg)    shift; cmd_pyiceberg "$@" ;;
+  flush)        shift; cmd_flush "$@" ;;
   clean)        cmd_clean ;;
   help|--help|-h)
     usage

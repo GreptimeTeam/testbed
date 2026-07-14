@@ -10,8 +10,8 @@ services:
       - --otlp-http-url-path=/v1/otlp/v1/traces
       - --otlp-header=x-greptime-pipeline-name="greptime_trace_v1"
       - --otlp-header=x-greptime-trace-table-name="opentelemetry_traces4"
-      - --traces=25000
+      - --traces=250000
       - --child-spans=6
-      - --rate=10000
+      - --rate=50000
       - --workers=4
       - --batch-size=500

@@ -3,3 +3,4 @@
 .greptimedb
 greptime
 greptime_data/
+__pycache__
