@@ -27,7 +27,6 @@ scripts/
   garage-local          Standalone garage launcher (not used by process-compose)
 .env                  Process-compose env vars (PC_PORT_NUM)
 .greptimedb/          Runtime data (gitignored), created on first start
-datasources/prometheus/ Prometheus + node-exporter (podman-compose, remote writes to greptimedb)
 ```
 
 ## Starting the Cluster
@@ -133,7 +132,6 @@ Standalone (when started): reuses the same ports 11040-11043, so all client code
 | haproxy | 11050 (HTTP), 11051 (gRPC), 11052 (MySQL), 11053 (PostgreSQL) |
 | flownode | 11060 (gRPC), 11061 (HTTP) |
 | standalone | 11040 (HTTP), 11041 (gRPC), 11042 (MySQL), 11043 (PostgreSQL) — shared with frontend |
-| prometheus | 11080 (HTTP UI) |
 
 ## Useful Commands
 
@@ -156,8 +154,9 @@ rm -rf .greptimedb                            # clean all data
 ./testbedctl s3 ls s3://test-bucket/ --recursive
 ./testbedctl telemetrygen up                   # start trace ingestion
 ./testbedctl telemetrygen down                 # stop trace ingestion
-./testbedctl prometheus up                     # start Prometheus + node-exporter
-./testbedctl prometheus down                   # stop Prometheus + node-exporter
+./testbedctl telemetrygen metrics up           # start continuous metrics (gauge/sum/histogram)
+./testbedctl telemetrygen metrics down         # stop metrics ingestion
+./testbedctl metrics-partition                 # partition greptime_physical_table into 4 ranges on 'timebox'
 ./testbedctl clean                              # remove .greptimedb (full data reset)
 ```
 
@@ -169,31 +168,6 @@ rm -rf .greptimedb                            # clean all data
 - **Adjust ports**: edit `process-compose.yml` (process ports) and `haproxy.cfg` (proxy ports)
 - **Run standalone only**: `process-compose up standalone` (auto-starts garage + garage-setup)
 - **testbedctl s3**: auto-sources `.greptimedb/s3.env` credentials before running `aws s3`
-
-## Prometheus + Node Exporter
-
-A minimal Prometheus setup that scrapes node-exporter metrics and remote writes them into GreptimeDB via haproxy.
-
-Prerequisite: GreptimeDB cluster must be running (`process-compose up haproxy`).
-
-```bash
-./testbedctl prometheus up -d
-```
-
-- **Prometheus UI**: `http://127.0.0.1:11080`
-- **Remote write target**: `http://host.containers.internal:11050/v1/prometheus/write?db=public`
-- Scrapes `node_exporter:9100` every 15s
-
-Stop:
-```bash
-./testbedctl prometheus down
-```
-
-Verify metrics in GreptimeDB:
-```sql
-SHOW TABLES FROM public;
-SELECT * FROM node_cpu_seconds_total LIMIT 5;
-```
 
 ## OpenTelemetry Traces (telemetrygen)
 
@@ -219,3 +193,111 @@ Verify traces in GreptimeDB:
 SHOW TABLES FROM public;
 SELECT * FROM opentelemetry_traces4 LIMIT 5;
 ```
+
+## OpenTelemetry Metrics (telemetrygen)
+
+Generates a continuous stream of OpenTelemetry metrics and ingests them into GreptimeDB via haproxy using the OTLP HTTP endpoint. Runs three metric types in parallel until stopped: **Gauge**, **Sum** (counter), and **Histogram**.
+
+Prerequisite: GreptimeDB cluster must be running (`process-compose up haproxy`).
+
+```bash
+./testbedctl telemetrygen metrics up
+```
+
+- **OTLP endpoint**: `http://host.containers.internal:11050/v1/otlp/v1/metrics`
+- Runs indefinitely (continuous stream) until `metrics down`
+- Tunables (env): `TG_METRICS_INTERVAL` (default `5s`), `TG_METRICS_RATE` (default `10`/sec/worker), `TG_METRICS_WORKERS` (default `2`), `TG_OTLP_ENDPOINT` (default haproxy `host.containers.internal:11050`; set to `host.containers.internal:11040` for standalone)
+
+GreptimeDB creates one physical table per metric under `public`:
+
+| Metric type | Table(s) |
+|---|---|
+| Gauge | `telemetrygen_gauge` |
+| Sum (counter) | `telemetrygen_sum_total` |
+| Histogram | `telemetrygen_histogram_bucket`, `telemetrygen_histogram_count`, `telemetrygen_histogram_sum` |
+
+Stop:
+```bash
+./testbedctl telemetrygen metrics down
+```
+
+Verify metrics in GreptimeDB:
+```sql
+SHOW TABLES FROM public;
+SELECT * FROM telemetrygen_gauge ORDER BY greptime_timestamp DESC LIMIT 5;
+SELECT count(*) FROM telemetrygen_sum_total;
+```
+
+The metrics services run with `--unique-timeseries`, which adds a semi-random
+`timebox` label column (many distinct values). This column is the partition key
+for the optional storage partitioning below.
+
+## Storage Partitioning (metric engine)
+
+GreptimeDB's metric engine stores every metric in a single shared physical table
+(`greptime_physical_table`), with each metric name exposed as a logical table.
+On a multi-datanode cluster you can range-partition that physical table to
+spread data across datanodes. See
+https://docs.greptime.com/tutorials/k8s-metrics-monitor/#storage-partitioning.
+
+`./testbedctl metrics-partition` recreates `greptime_physical_table` with **4
+range partitions on the `timebox` column** (the semi-random label emitted by the
+metrics generators):
+
+```sql
+CREATE TABLE greptime_physical_table (
+  greptime_timestamp TIMESTAMP NOT NULL,
+  greptime_value DOUBLE NULL,
+  timebox STRING NULL,
+  TIME INDEX (greptime_timestamp),
+  PRIMARY KEY (timebox)
+)
+PARTITION ON COLUMNS (timebox) (
+  timebox < '2',
+  timebox >= '2' AND timebox < '5',
+  timebox >= '5' AND timebox < '8',
+  timebox >= '8'
+)
+ENGINE = metric WITH ('physical_metric_table' = 'true');
+```
+
+Ranges bucket `timebox` by leading digit; because `timebox` is a string, every
+value starting with `'1'` sorts before `'2'`, so the buckets stay populated as
+the counter grows. Distribution is approximate (leading digits are Benford-like,
+so partition 1 holds more data), but all 4 partitions receive data.
+
+### Workflow
+
+Run on a **clean** database, before ingesting metrics:
+
+```bash
+process-compose down && ./testbedctl clean && process-compose up haproxy   # or: up standalone-fs
+./testbedctl metrics-partition                                            # create the partitioned physical table
+./testbedctl telemetrygen metrics up                                      # ingest (carries 'timebox')
+```
+
+If `greptime_physical_table` already backs live metrics, `metrics-partition`
+refuses to drop it and tells you to clean first (the physical table cannot be
+replaced while logical metric tables depend on it).
+
+Verify:
+```sql
+SHOW CREATE TABLE greptime_physical_table;          -- PARTITION ON COLUMNS (timebox) ...
+-- rows per partition for the gauge metric:
+SELECT CASE WHEN timebox < '2' THEN 'P1'
+           WHEN timebox < '5' THEN 'P2'
+           WHEN timebox < '8' THEN 'P3'
+           ELSE 'P4' END AS partition, count(*)
+FROM telemetrygen_gauge GROUP BY 1 ORDER BY 1;
+```
+
+### Caveats
+
+- `greptime_physical_table` is **shared** by all metric sources. Once it is
+  partitioned on `timebox`, only metrics that carry `timebox` route correctly,
+  so do not ingest other metric sources (which lack `timebox`) on the same
+  database after partitioning.
+- `timebox` is only emitted by the telemetrygen metrics generators
+  (`--unique-timeseries`). Trace ingestion is unaffected.
+- On the distributed cluster the 4 partitions are distributed across the
+  datanodes (2 datanodes → 2 partitions each).

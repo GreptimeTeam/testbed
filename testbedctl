@@ -11,8 +11,11 @@ Commands:
   psql          Connect to GreptimeDB via PostgreSQL protocol
   mysql         Connect to GreptimeDB via MySQL protocol
   s3  [args..]  Run aws s3 against Garage (auto-sources credentials)
-  telemetrygen Start telemetrygen trace ingestion
-  prometheus    Start Prometheus + node-exporter
+  telemetrygen up              Start OTLP trace ingestion
+  telemetrygen down            Stop trace ingestion
+  telemetrygen metrics up      Start continuous OTLP metrics (gauge/sum/histogram)
+  telemetrygen metrics down    Stop metrics ingestion
+  metrics-partition  Create greptime_physical_table partitioned on 'timebox' (4 partitions)
   duckdb        Open DuckDB shell with Iceberg REST catalog attached
   pyiceberg [table] [-local]
                 Query Iceberg tables via pyiceberg.
@@ -59,12 +62,116 @@ cmd_s3() {
   exec aws s3 "$@"
 }
 
-cmd_telemetrygen() {
-  exec podman-compose -f "${PROJ_DIR}/datasources/telemetrygen/compose.yaml" up "$@"
+TG_COMPOSE="${PROJ_DIR}/datasources/telemetrygen/compose.yaml"
+TG_METRICS_SVCS=(telemetrygen-metrics-gauge telemetrygen-metrics-sum telemetrygen-metrics-histogram)
+
+cmd_telemetrygen_metrics() {
+  local action="${1:-}"
+  case "$action" in
+    up)
+      exec podman-compose -f "$TG_COMPOSE" up -d "${TG_METRICS_SVCS[@]}"
+      ;;
+    down)
+      exec podman rm -f --ignore "${TG_METRICS_SVCS[@]}"
+      ;;
+    *)
+      echo "Usage: testbedctl telemetrygen metrics <up|down>" >&2
+      [ -n "$action" ] && echo "Unknown action: $action" >&2
+      exit 1
+      ;;
+  esac
 }
 
-cmd_prometheus() {
-  exec podman-compose -f "${PROJ_DIR}/datasources/prometheus/compose.yaml" "$@"
+cmd_telemetrygen() {
+  case "${1:-}" in
+    metrics)
+      shift
+      cmd_telemetrygen_metrics "$@"
+      ;;
+    up)
+      # Detached: returns immediately; the finite trace burst runs to completion.
+      exec podman-compose -f "$TG_COMPOSE" up -d telemetrygen
+      ;;
+    down)
+      exec podman rm -f --ignore telemetrygen
+      ;;
+    *)
+      cat >&2 <<EOF
+Usage:
+  testbedctl telemetrygen up            Start OTLP trace ingestion
+  testbedctl telemetrygen down          Stop trace ingestion
+  testbedctl telemetrygen metrics up    Start continuous metrics (gauge/sum/histogram)
+  testbedctl telemetrygen metrics down  Stop metrics ingestion
+
+Metrics tunables (env): TG_OTLP_ENDPOINT, TG_METRICS_INTERVAL, TG_METRICS_RATE, TG_METRICS_WORKERS
+EOF
+      [ -n "${1:-}" ] && echo "Unknown telemetrygen action: $1" >&2
+      exit 1
+      ;;
+  esac
+}
+
+cmd_metrics_partition() {
+  # Sets up the metric-engine physical table with 4 range partitions on the
+  # 'timebox' column. telemetrygen emits 'timebox' via its --unique-timeseries
+  # flag (enabled in the metrics compose), giving a semi-random partition key.
+  local port="${TG_DB_PORT:-11043}"
+  local PSQL=(psql -h 127.0.0.1 -p "$port" -d public -U root -t -A -v ON_ERROR_STOP=1)
+
+  phys_exists() {
+    [ "$("${PSQL[@]}" -c "SELECT 1 FROM information_schema.tables WHERE table_name='greptime_physical_table'" 2>/dev/null)" = "1" ]
+  }
+
+  if phys_exists; then
+    echo "==> greptime_physical_table exists; attempting to drop it (its metric data will be lost)..."
+    local drop_out
+    drop_out="$("${PSQL[@]}" -c "DROP TABLE greptime_physical_table" 2>&1)" || true
+    if phys_exists; then
+      echo "$drop_out" >&2
+      cat >&2 <<'EOF'
+Cannot replace 'greptime_physical_table': it still backs live logical metric tables
+(e.g. telemetrygen_* metrics). Reset to a clean database first:
+
+    process-compose down && ./testbedctl clean && process-compose up haproxy     # distributed cluster
+    # or:  process-compose up standalone-fs                                   # single node
+
+then re-run:  ./testbedctl metrics-partition
+EOF
+      exit 1
+    fi
+    echo "==> dropped existing greptime_physical_table"
+  fi
+
+  echo "==> creating greptime_physical_table with 4 partitions on the 'timebox' column..."
+  "${PSQL[@]}" 2>&1 <<'SQL'
+CREATE TABLE greptime_physical_table (
+  greptime_timestamp TIMESTAMP NOT NULL,
+  greptime_value DOUBLE NULL,
+  timebox STRING NULL,
+  TIME INDEX (greptime_timestamp),
+  PRIMARY KEY (timebox)
+)
+PARTITION ON COLUMNS (timebox) (
+  timebox < '2',
+  timebox >= '2' AND timebox < '5',
+  timebox >= '5' AND timebox < '8',
+  timebox >= '8'
+)
+ENGINE = metric
+WITH ('physical_metric_table' = 'true');
+SQL
+
+  if phys_exists; then
+    echo "==> done. greptime_physical_table now has 4 partitions keyed on 'timebox'."
+    echo "==> populate it with:"
+    echo "      ./testbedctl telemetrygen metrics up"
+    echo "    (the metrics compose uses --unique-timeseries, which emits 'timebox')"
+    echo "==> note: once partitioned, only metrics carrying 'timebox' route correctly;"
+    echo "    avoid ingesting other metric sources on the same database (they lack 'timebox')."
+  else
+    echo "ERROR: greptime_physical_table was not created" >&2
+    exit 1
+  fi
 }
 
 cmd_duckdb() {
@@ -140,7 +247,7 @@ case "${1:-help}" in
   mysql)        shift; cmd_mysql "$@" ;;
   s3)           shift; cmd_s3 "$@" ;;
   telemetrygen) shift; cmd_telemetrygen "$@" ;;
-  prometheus)   shift; cmd_prometheus "$@" ;;
+  metrics-partition) shift; cmd_metrics_partition "$@" ;;
   duckdb)       shift; cmd_duckdb "$@" ;;
   pyiceberg)    shift; cmd_pyiceberg "$@" ;;
   flush)        shift; cmd_flush "$@" ;;

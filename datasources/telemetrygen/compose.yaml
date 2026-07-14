@@ -1,3 +1,22 @@
+# Telemetrygen datasources for GreptimeDB.
+#
+# Two independent groups, each started/stopped on its own:
+#   - telemetrygen            : finite OTLP trace burst (exits when done)
+#   - telemetrygen-metrics-*  : continuous OTLP metrics stream (Gauge/Sum/Histogram)
+#
+# Target is haproxy (distributed cluster, port 11050) by default. To aim at a
+# standalone (11040), set TG_OTLP_ENDPOINT, e.g.:
+#   TG_OTLP_ENDPOINT=host.containers.internal:11040 ./testbedctl telemetrygen metrics up
+#
+# Tunables for the metrics stream (apply to all three metric types):
+#   TG_METRICS_INTERVAL  reporting interval      (default 5s)
+#   TG_METRICS_RATE      metrics/sec per worker   (default 10)
+#   TG_METRICS_WORKERS   worker goroutines        (default 2)
+#
+# Metrics services use --unique-timeseries, which adds a semi-random 'timebox'
+# label column (many distinct values). This is the partition key used by
+# `./testbedctl metrics-partition` to split greptime_physical_table into 4
+# range partitions. See "Storage Partitioning" in AGENTS.md.
 services:
   telemetrygen:
     image: telemetrygen:latest
@@ -15,3 +34,57 @@ services:
       - --rate=50000
       - --workers=4
       - --batch-size=500
+
+  telemetrygen-metrics-gauge:
+    image: telemetrygen:latest
+    container_name: telemetrygen-metrics-gauge
+    command:
+      - metrics
+      - --otlp-endpoint=${TG_OTLP_ENDPOINT:-host.containers.internal:11050}
+      - --otlp-http
+      - --otlp-insecure
+      - --otlp-http-url-path=/v1/otlp/v1/metrics
+      - --duration=inf
+      - --interval=${TG_METRICS_INTERVAL:-5s}
+      - --rate=${TG_METRICS_RATE:-10}
+      - --workers=${TG_METRICS_WORKERS:-2}
+      - --service=telemetrygen
+      - --unique-timeseries
+      - --metric-type=Gauge
+      - --otlp-metric-name=telemetrygen_gauge
+
+  telemetrygen-metrics-sum:
+    image: telemetrygen:latest
+    container_name: telemetrygen-metrics-sum
+    command:
+      - metrics
+      - --otlp-endpoint=${TG_OTLP_ENDPOINT:-host.containers.internal:11050}
+      - --otlp-http
+      - --otlp-insecure
+      - --otlp-http-url-path=/v1/otlp/v1/metrics
+      - --duration=inf
+      - --interval=${TG_METRICS_INTERVAL:-5s}
+      - --rate=${TG_METRICS_RATE:-10}
+      - --workers=${TG_METRICS_WORKERS:-2}
+      - --service=telemetrygen
+      - --unique-timeseries
+      - --metric-type=Sum
+      - --otlp-metric-name=telemetrygen_sum
+
+  telemetrygen-metrics-histogram:
+    image: telemetrygen:latest
+    container_name: telemetrygen-metrics-histogram
+    command:
+      - metrics
+      - --otlp-endpoint=${TG_OTLP_ENDPOINT:-host.containers.internal:11050}
+      - --otlp-http
+      - --otlp-insecure
+      - --otlp-http-url-path=/v1/otlp/v1/metrics
+      - --duration=inf
+      - --interval=${TG_METRICS_INTERVAL:-5s}
+      - --rate=${TG_METRICS_RATE:-10}
+      - --workers=${TG_METRICS_WORKERS:-2}
+      - --service=telemetrygen
+      - --unique-timeseries
+      - --metric-type=Histogram
+      - --otlp-metric-name=telemetrygen_histogram

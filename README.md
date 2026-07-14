@@ -64,8 +64,9 @@ A utility script for common operations against the running cluster:
 ./testbedctl s3 ls s3://test-bucket/ --recursive  # List all objects
 ./testbedctl telemetrygen                   # Ingest OTel traces
 ./testbedctl telemetrygen down              # Stop trace ingestion
-./testbedctl prometheus up -d               # Start Prometheus + node-exporter
-./testbedctl prometheus down                # Stop Prometheus
+./testbedctl telemetrygen metrics up        # Ingest continuous OTel metrics (gauge/sum/histogram)
+./testbedctl telemetrygen metrics down      # Stop metrics ingestion
+./testbedctl metrics-partition              # Partition greptime_physical_table into 4 ranges on 'timebox'
 ./testbedctl clean                          # Remove .greptimedb
 ```
 
