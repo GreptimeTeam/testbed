@@ -50,6 +50,13 @@
           LD_LIBRARY_PATH = lib.makeLibraryPath buildInputs;
 
           shellHook = ''
+            # Expose ./testbedctl (and the ./greptime binary) on PATH.
+            # testbedctl derives its project dir from $0, so once the project
+            # root is on PATH it resolves correctly from any subdirectory.
+            if [ -x "$PWD/testbedctl" ]; then
+              export PATH="$PWD:$PATH"
+            fi
+
             # Source Garage S3 credentials if available
             if [ -f .greptimedb/s3.env ]; then
               . .greptimedb/s3.env
