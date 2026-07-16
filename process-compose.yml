@@ -128,7 +128,7 @@ processes:
 
   frontend:
     command: |
-      GREPTIME_BIN={{.GREPTIME_BIN}} GREPTIME_HOME={{.GREPTIME_HOME}} METASRV_ADDR={{.METASRV_ADDR}} scripts/start-frontend 0 0.0.0.0:11040 0.0.0.0:11041 127.0.0.1:11041 0.0.0.0:11042 0.0.0.0:11043
+      GREPTIME_BIN={{.GREPTIME_BIN}} GREPTIME_HOME={{.GREPTIME_HOME}} METASRV_ADDR={{.METASRV_ADDR}} scripts/start-frontend 0 0.0.0.0:11050 0.0.0.0:11051 127.0.0.1:11051 0.0.0.0:11052 0.0.0.0:11053
     depends_on:
       metasrv:
         condition: process_healthy
@@ -138,7 +138,7 @@ processes:
         condition: process_healthy
     readiness_probe:
       exec:
-        command: "curl -sf http://127.0.0.1:11040/health"
+        command: "curl -sf http://127.0.0.1:11050/health"
       initial_delay_seconds: 2
       period_seconds: 3
       timeout_seconds: 3
@@ -149,7 +149,7 @@ processes:
 
   frontend-1:
     command: |
-      GREPTIME_BIN={{.GREPTIME_BIN}} GREPTIME_HOME={{.GREPTIME_HOME}} METASRV_ADDR={{.METASRV_ADDR}} scripts/start-frontend 1 0.0.0.0:11044 0.0.0.0:11045 127.0.0.1:11045 0.0.0.0:11046 0.0.0.0:11047
+      GREPTIME_BIN={{.GREPTIME_BIN}} GREPTIME_HOME={{.GREPTIME_HOME}} METASRV_ADDR={{.METASRV_ADDR}} scripts/start-frontend 1 0.0.0.0:11054 0.0.0.0:11055 127.0.0.1:11055 0.0.0.0:11056 0.0.0.0:11057
     depends_on:
       metasrv:
         condition: process_healthy
@@ -159,7 +159,7 @@ processes:
         condition: process_healthy
     readiness_probe:
       exec:
-        command: "curl -sf http://127.0.0.1:11044/health"
+        command: "curl -sf http://127.0.0.1:11054/health"
       initial_delay_seconds: 2
       period_seconds: 3
       timeout_seconds: 3
@@ -176,7 +176,7 @@ processes:
         condition: process_healthy
     readiness_probe:
       exec:
-        command: "curl -sf http://127.0.0.1:11050/health"
+        command: "curl -sf http://127.0.0.1:11040/health"
       initial_delay_seconds: 2
       period_seconds: 3
       timeout_seconds: 3

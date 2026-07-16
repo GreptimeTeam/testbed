@@ -29,6 +29,8 @@ process-compose up standalone
 | MySQL | `127.0.0.1:11042` |
 | PostgreSQL | `127.0.0.1:11043` |
 
+> These are the **client-facing ports**, shared by **standalone**, **standalone-fs**, and the distributed cluster's **haproxy** — they are never run at the same time, so the same client code works unchanged across every mode.
+
 ### GreptimeDB Standalone (Local File Backend)
 
 ```bash
@@ -43,12 +45,14 @@ Single-node GreptimeDB using **local disk** instead of Garage S3. No garage/etcd
 process-compose up haproxy
 ```
 
+Clients connect to **haproxy** on the same ports as standalone (**11040-11043**) — haproxy load-balances the internal frontend instance(s), which are not exposed directly. So client code written for standalone works here unchanged.
+
 | Protocol | Address |
 |---|---|
-| HTTP | `http://127.0.0.1:11050` |
-| gRPC | `127.0.0.1:11051` |
-| MySQL | `127.0.0.1:11052` |
-| PostgreSQL | `127.0.0.1:11053` |
+| HTTP | `http://127.0.0.1:11040` |
+| gRPC | `127.0.0.1:11041` |
+| MySQL | `127.0.0.1:11042` |
+| PostgreSQL | `127.0.0.1:11043` |
 
 Place a `greptime` binary in the project root before starting. Process-compose runs on port **11099**.
 

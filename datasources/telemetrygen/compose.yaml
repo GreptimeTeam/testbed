@@ -15,7 +15,7 @@ services:
     container_name: telemetrygen
     command:
       - traces
-      - --otlp-endpoint=host.containers.internal:11050
+      - --otlp-endpoint=host.containers.internal:11040
       - --otlp-http
       - --otlp-insecure
       - --otlp-http-url-path=/v1/otlp/v1/traces

@@ -19,7 +19,7 @@ metrics-partition) still receives data in all partitions.
 Metric names are reproducible for a given `TG_METRIC_SEED`.
 
 Environment (all optional):
-  TG_OTLP_ENDPOINT      host:port of the OTLP receiver      (default 127.0.0.1:11050)
+  TG_OTLP_ENDPOINT      host:port of the OTLP receiver      (default 127.0.0.1:11040)
   TG_OTLP_URL_PATH      OTLP HTTP path                       (default /v1/otlp/v1/metrics)
   TG_METRIC_COUNT       number of distinct metric names      (default 50)
   TG_METRIC_SEED        RNG seed for reproducible names       (default 0)
@@ -150,7 +150,7 @@ def make_timeboxes(seed, per_digit=12):
 # --- OTel wiring ------------------------------------------------------------
 
 def build_url():
-    endpoint = env("TG_OTLP_ENDPOINT", "127.0.0.1:11050").rstrip("/")
+    endpoint = env("TG_OTLP_ENDPOINT", "127.0.0.1:11040").rstrip("/")
     path = env("TG_OTLP_URL_PATH", "/v1/otlp/v1/metrics")
     if endpoint.startswith("http://") or endpoint.startswith("https://"):
         return endpoint  # caller knows what they're doing

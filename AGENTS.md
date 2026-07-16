@@ -85,15 +85,15 @@ etcd -> metasrv -> datanode-{0,1} -> frontend -> haproxy
 - **garage-setup**: exits after creating bucket/key/layout, writes creds to `.greptimedb/s3.env`
 - **metasrv**: cluster coordinator (port 11020 gRPC, 11021 HTTP)
 - **datanode-{0,1}**: store data in garage via S3 protocol, each uses `scripts/start-datanode`
-- **frontend**: query layer (ports 11040-11043 for HTTP/gRPC/MySQL/PostgreSQL)
-- **haproxy**: unified entry point proxying to frontend
+- **frontend**: query layer, internal (ports 11050-11053 for HTTP/gRPC/MySQL/PostgreSQL); fronted by haproxy, not exposed to clients
+- **haproxy**: client-facing entry point (ports 11040-11043) load-balancing the frontend instance(s)
 
 ### Optional Processes (start manually)
 
 - **metasrv-1**: second metasrv instance (port 11022 gRPC, 11023 HTTP)
-- **frontend-1**: second frontend instance (ports 11044-11047 for HTTP/gRPC/MySQL/PostgreSQL)
+- **frontend-1**: second frontend instance, internal (ports 11054-11057 for HTTP/gRPC/MySQL/PostgreSQL)
 - **flownode**: flow engine (port 11060 gRPC, 11061 HTTP)
-- **standalone**: single-node GreptimeDB using garage for object storage (reuses frontend ports 11040-11043 for HTTP/gRPC/MySQL/PostgreSQL, since standalone and the distributed cluster are never run simultaneously)
+- **standalone**: single-node GreptimeDB using garage for object storage (binds the client-facing ports 11040-11043 for HTTP/gRPC/MySQL/PostgreSQL, since standalone and the distributed cluster are never run simultaneously)
 - **standalone-fs**: single-node GreptimeDB using **local disk** (File backend) instead of Garage S3. Fastest/lightest mode: no object store, no garage dependency, data lives under `.greptimedb/standalone-fs/`. Reuses the same ports 11040-11043.
 
 Start optional processes with:
@@ -103,18 +103,18 @@ process-compose process start <process-name>
 
 ## Connecting to GreptimeDB
 
-Via haproxy (distributed cluster):
+Via haproxy (distributed cluster) — the **client-facing ports 11040-11043**, same as standalone/standalone-fs:
 
 | Protocol | Address | Notes |
 |---|---|---|
-| HTTP API | `http://127.0.0.1:11050` | Dashboard and REST API |
-| gRPC | `127.0.0.1:11051` | |
-| MySQL | `127.0.0.1:11052` | User `root`, no password |
-| PostgreSQL | `127.0.0.1:11053` | User `root`, no password |
+| HTTP API | `http://127.0.0.1:11040` | Dashboard and REST API |
+| gRPC | `127.0.0.1:11041` | |
+| MySQL | `127.0.0.1:11042` | User `root`, no password |
+| PostgreSQL | `127.0.0.1:11043` | User `root`, no password |
 
-Direct to frontend (bypass haproxy): ports 11040-11043.
+Frontend instances are internal and not exposed to clients (frontend-0: 11050-11053, frontend-1: 11054-11057).
 
-Standalone (when started): reuses the same ports 11040-11043, so all client code (e.g. `scripts/read_iceberg.py`) works identically in either mode.
+Standalone (when started): binds the same client-facing ports 11040-11043, so all client code (e.g. `scripts/read_iceberg.py`) works identically in either mode.
 
 ## Port Allocation
 
@@ -127,11 +127,11 @@ Standalone (when started): reuses the same ports 11040-11043, so all client code
 | metasrv-1 | 11022 (gRPC), 11023 (HTTP) |
 | datanode-0 | 11030 (gRPC), 11031 (HTTP) |
 | datanode-1 | 11032 (gRPC), 11033 (HTTP) |
-| frontend | 11040 (HTTP), 11041 (gRPC), 11042 (MySQL), 11043 (PostgreSQL) |
-| frontend-1 | 11044 (HTTP), 11045 (gRPC), 11046 (MySQL), 11047 (PostgreSQL) |
-| haproxy | 11050 (HTTP), 11051 (gRPC), 11052 (MySQL), 11053 (PostgreSQL) |
+| frontend | 11050 (HTTP), 11051 (gRPC), 11052 (MySQL), 11053 (PostgreSQL) — internal |
+| frontend-1 | 11054 (HTTP), 11055 (gRPC), 11056 (MySQL), 11057 (PostgreSQL) — internal |
+| haproxy | 11040 (HTTP), 11041 (gRPC), 11042 (MySQL), 11043 (PostgreSQL) — client-facing |
 | flownode | 11060 (gRPC), 11061 (HTTP) |
-| standalone | 11040 (HTTP), 11041 (gRPC), 11042 (MySQL), 11043 (PostgreSQL) — shared with frontend |
+| standalone | 11040 (HTTP), 11041 (gRPC), 11042 (MySQL), 11043 (PostgreSQL) — client-facing, shared with haproxy |
 
 ## Useful Commands
 
@@ -179,7 +179,7 @@ Prerequisite: GreptimeDB cluster must be running (`process-compose up haproxy`).
 ./testbedctl telemetrygen up
 ```
 
-- **OTLP endpoint**: `http://host.containers.internal:11050/v1/otlp/v1/traces`
+- **OTLP endpoint**: `http://host.containers.internal:11040/v1/otlp/v1/traces`
 - Generates 25000 traces with 6 child spans each, at 10000 traces/sec
 - Uses the `greptime_trace_v1` pipeline and writes to `opentelemetry_traces4` table
 
@@ -204,21 +204,10 @@ Prerequisite: GreptimeDB cluster must be running (`process-compose up haproxy`),
 ./testbedctl telemetrygen metrics up
 ```
 
-- **OTLP endpoint**: `http://127.0.0.1:11050/v1/otlp/v1/metrics` (the generator runs on the host, not in a container)
+- **OTLP endpoint**: `http://127.0.0.1:11040/v1/otlp/v1/metrics` (client HTTP port: haproxy in distributed, standalone/standalone-fs in single-node)
 - Runs indefinitely as a background process until `metrics down`; pidfile at `.greptimedb/tg-metrics.pid`, log at `.greptimedb/tg-metrics.log`
 - To preview the metric names without starting: `python3 datasources/telemetrygen/gen_metrics.py --list`
-- Tunables (env): `TG_METRIC_COUNT` (default `50`, number of distinct metric names), `TG_METRIC_SEED` (default `0`, RNG seed — change to reshuffle names), `TG_OTLP_ENDPOINT` (default `127.0.0.1:11050`; set to `127.0.0.1:11040` for standalone/standalone-fs), `TG_OTLP_URL_PATH` (default `/v1/otlp/v1/metrics`), `TG_METRICS_INTERVAL` (export interval, default `5s`), `TG_METRICS_RATE` (observations/sec per worker, default `10`), `TG_METRICS_WORKERS` (worker threads, default `2`)
-
-Prerequisite: GreptimeDB cluster must be running (`process-compose up haproxy`).
-
-```bash
-./testbedctl telemetrygen metrics up
-```
-
-- **OTLP endpoint**: `http://127.0.0.1:11050/v1/otlp/v1/metrics` (the generator runs on the host, not in a container)
-- Runs indefinitely as a background process until `metrics down`; pidfile at `.greptimedb/tg-metrics.pid`, log at `.greptimedb/tg-metrics.log`
-- To preview the metric names without starting: `python3 datasources/telemetrygen/gen_metrics.py --list`
-- Tunables (env): `TG_METRIC_COUNT` (default `50`, number of distinct metric names), `TG_METRIC_SEED` (default `0`, RNG seed — change to reshuffle names), `TG_OTLP_ENDPOINT` (default `127.0.0.1:11050`; set to `127.0.0.1:11040` for standalone/standalone-fs), `TG_OTLP_URL_PATH` (default `/v1/otlp/v1/metrics`), `TG_METRICS_INTERVAL` (export interval, default `5s`), `TG_METRICS_RATE` (observations/sec per worker, default `10`), `TG_METRICS_WORKERS` (worker threads, default `2`)
+- Tunables (env): `TG_METRIC_COUNT` (default `50`, number of distinct metric names), `TG_METRIC_SEED` (default `0`, RNG seed — change to reshuffle names), `TG_OTLP_ENDPOINT` (default `127.0.0.1:11040`), `TG_OTLP_URL_PATH` (default `/v1/otlp/v1/metrics`), `TG_METRICS_INTERVAL` (export interval, default `5s`), `TG_METRICS_RATE` (observations/sec per worker, default `10`), `TG_METRICS_WORKERS` (worker threads, default `2`)
 
 All metrics share the single metric-engine physical table (`greptime_physical_table`); each metric name is exposed as a **logical table** under `public`. GreptimeDB derives the logical table name from the OTLP metric name plus a type-specific suffix:
 
