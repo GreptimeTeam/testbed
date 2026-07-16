@@ -120,7 +120,7 @@ apply_on_query = "auto"
 mem_threshold_on_create = "auto"
 
 [region_engine.mito.gc]
-enable = false
+enable = true
 lingering_time = "1m"
 
 [[region_engine]]

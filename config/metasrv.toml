@@ -61,3 +61,6 @@ max_log_files = 720
 ## The memory options.
 [memory]
 enable_heap_profiling = true
+
+[gc]
+enabled = true
