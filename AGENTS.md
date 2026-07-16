@@ -194,9 +194,20 @@ SHOW TABLES FROM public;
 SELECT * FROM opentelemetry_traces4 LIMIT 5;
 ```
 
-## OpenTelemetry Metrics (telemetrygen)
+## OpenTelemetry Metrics (Python OTLP generator)
 
-Generates a continuous stream of OpenTelemetry metrics and ingests them into GreptimeDB via haproxy using the OTLP HTTP endpoint. Runs three metric types in parallel until stopped: **Gauge**, **Sum** (counter), and **Histogram**.
+Generates a continuous stream of OpenTelemetry metrics and ingests them into GreptimeDB via the OTLP HTTP endpoint. A **single Python process** (`datasources/telemetrygen/gen_metrics.py`, using `opentelemetry-sdk`) emits **`TG_METRIC_COUNT` (default 50) distinct metrics**, each with a **randomized metric name** and a **randomized type** (**Gauge** / **Sum** / **Histogram**). This replaces the earlier one-telemetrygen-container-per-name setup. Names are reproducible for a given `TG_METRIC_SEED`; change the seed to reshuffle.
+
+Prerequisite: GreptimeDB cluster must be running (`process-compose up haproxy`), and you must be inside `nix develop` (the dev shell provides `opentelemetry-sdk` / `opentelemetry-exporter-otlp-proto-http`).
+
+```bash
+./testbedctl telemetrygen metrics up
+```
+
+- **OTLP endpoint**: `http://127.0.0.1:11050/v1/otlp/v1/metrics` (the generator runs on the host, not in a container)
+- Runs indefinitely as a background process until `metrics down`; pidfile at `.greptimedb/tg-metrics.pid`, log at `.greptimedb/tg-metrics.log`
+- To preview the metric names without starting: `python3 datasources/telemetrygen/gen_metrics.py --list`
+- Tunables (env): `TG_METRIC_COUNT` (default `50`, number of distinct metric names), `TG_METRIC_SEED` (default `0`, RNG seed — change to reshuffle names), `TG_OTLP_ENDPOINT` (default `127.0.0.1:11050`; set to `127.0.0.1:11040` for standalone/standalone-fs), `TG_OTLP_URL_PATH` (default `/v1/otlp/v1/metrics`), `TG_METRICS_INTERVAL` (export interval, default `5s`), `TG_METRICS_RATE` (observations/sec per worker, default `10`), `TG_METRICS_WORKERS` (worker threads, default `2`)
 
 Prerequisite: GreptimeDB cluster must be running (`process-compose up haproxy`).
 
@@ -204,17 +215,20 @@ Prerequisite: GreptimeDB cluster must be running (`process-compose up haproxy`).
 ./testbedctl telemetrygen metrics up
 ```
 
-- **OTLP endpoint**: `http://host.containers.internal:11050/v1/otlp/v1/metrics`
-- Runs indefinitely (continuous stream) until `metrics down`
-- Tunables (env): `TG_METRICS_INTERVAL` (default `5s`), `TG_METRICS_RATE` (default `10`/sec/worker), `TG_METRICS_WORKERS` (default `2`), `TG_OTLP_ENDPOINT` (default haproxy `host.containers.internal:11050`; set to `host.containers.internal:11040` for standalone)
+- **OTLP endpoint**: `http://127.0.0.1:11050/v1/otlp/v1/metrics` (the generator runs on the host, not in a container)
+- Runs indefinitely as a background process until `metrics down`; pidfile at `.greptimedb/tg-metrics.pid`, log at `.greptimedb/tg-metrics.log`
+- To preview the metric names without starting: `python3 datasources/telemetrygen/gen_metrics.py --list`
+- Tunables (env): `TG_METRIC_COUNT` (default `50`, number of distinct metric names), `TG_METRIC_SEED` (default `0`, RNG seed — change to reshuffle names), `TG_OTLP_ENDPOINT` (default `127.0.0.1:11050`; set to `127.0.0.1:11040` for standalone/standalone-fs), `TG_OTLP_URL_PATH` (default `/v1/otlp/v1/metrics`), `TG_METRICS_INTERVAL` (export interval, default `5s`), `TG_METRICS_RATE` (observations/sec per worker, default `10`), `TG_METRICS_WORKERS` (worker threads, default `2`)
 
-GreptimeDB creates one physical table per metric under `public`:
+All metrics share the single metric-engine physical table (`greptime_physical_table`); each metric name is exposed as a **logical table** under `public`. GreptimeDB derives the logical table name from the OTLP metric name plus a type-specific suffix:
 
-| Metric type | Table(s) |
+| Metric type | Logical table(s) from metric name `<name>` |
 |---|---|
-| Gauge | `telemetrygen_gauge` |
-| Sum (counter) | `telemetrygen_sum_total` |
-| Histogram | `telemetrygen_histogram_bucket`, `telemetrygen_histogram_count`, `telemetrygen_histogram_sum` |
+| Gauge | `<name>` |
+| Sum (counter) | `<name>_total` |
+| Histogram | `<name>_bucket`, `<name>_count`, `<name>_sum` |
+
+With ~50 randomized names you get dozens of logical tables (e.g. `cpu_usage_billing_api`, `http_requests_checkout_total`, `db_query_duration_api_bucket`). List them with `SHOW TABLES FROM public;`.
 
 Stop:
 ```bash
@@ -223,14 +237,13 @@ Stop:
 
 Verify metrics in GreptimeDB:
 ```sql
-SHOW TABLES FROM public;
-SELECT * FROM telemetrygen_gauge ORDER BY greptime_timestamp DESC LIMIT 5;
-SELECT count(*) FROM telemetrygen_sum_total;
+SHOW TABLES FROM public;                                                 -- ~50 logical metric tables
+SELECT * FROM <metric_table> ORDER BY greptime_timestamp DESC LIMIT 5;    -- pick any name from SHOW TABLES
 ```
 
-The metrics services run with `--unique-timeseries`, which adds a semi-random
-`timebox` label column (many distinct values). This column is the partition key
-for the optional storage partitioning below.
+Every observation carries a semi-random `timebox` label (a bounded pool of many
+distinct values whose leading digit spans 1..9). This column is the partition key
+for the optional storage partitioning below — all four partitions receive data.
 
 ## Storage Partitioning (metric engine)
 
@@ -283,12 +296,13 @@ replaced while logical metric tables depend on it).
 Verify:
 ```sql
 SHOW CREATE TABLE greptime_physical_table;          -- PARTITION ON COLUMNS (timebox) ...
--- rows per partition for the gauge metric:
+-- rows per partition for any one metric (pick a table from SHOW TABLES FROM public;
+-- e.g. a gauge-type logical table):
 SELECT CASE WHEN timebox < '2' THEN 'P1'
            WHEN timebox < '5' THEN 'P2'
            WHEN timebox < '8' THEN 'P3'
            ELSE 'P4' END AS partition, count(*)
-FROM telemetrygen_gauge GROUP BY 1 ORDER BY 1;
+FROM <metric_table> GROUP BY 1 ORDER BY 1;
 ```
 
 ### Caveats

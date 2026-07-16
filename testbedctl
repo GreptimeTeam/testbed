@@ -13,7 +13,7 @@ Commands:
   s3  [args..]  Run aws s3 against Garage (auto-sources credentials)
   telemetrygen up              Start OTLP trace ingestion
   telemetrygen down            Stop trace ingestion
-  telemetrygen metrics up      Start continuous OTLP metrics (gauge/sum/histogram)
+  telemetrygen metrics up      Start continuous OTLP metrics (~50 randomized names, Python OTel)
   telemetrygen metrics down    Stop metrics ingestion
   metrics-partition  Create greptime_physical_table partitioned on 'timebox' (4 partitions)
   duckdb        Open DuckDB shell with Iceberg REST catalog attached
@@ -62,20 +62,91 @@ cmd_s3() {
   exec aws s3 "$@"
 }
 
-TG_COMPOSE="${PROJ_DIR}/datasources/telemetrygen/compose.yaml"
-TG_METRICS_SVCS=(telemetrygen-metrics-gauge telemetrygen-metrics-sum telemetrygen-metrics-histogram)
+TG_DIR="${PROJ_DIR}/datasources/telemetrygen"
+TG_COMPOSE="${TG_DIR}/compose.yaml"        # traces service only
+TG_METRICS_GEN="${TG_DIR}/gen_metrics.py"   # Python OTLP metrics generator (single process)
+TG_METRICS_PID="${PROJ_DIR}/.greptimedb/tg-metrics.pid"
+TG_METRICS_LOG="${PROJ_DIR}/.greptimedb/tg-metrics.log"
+
+tg_metrics_running() {
+  [ -f "$TG_METRICS_PID" ] && kill -0 "$(cat "$TG_METRICS_PID")" 2>/dev/null
+}
 
 cmd_telemetrygen_metrics() {
   local action="${1:-}"
   case "$action" in
     up)
-      exec podman-compose -f "$TG_COMPOSE" up -d "${TG_METRICS_SVCS[@]}"
+      mkdir -p "${PROJ_DIR}/.greptimedb"
+      if tg_metrics_running; then
+        echo "==> telemetrygen metrics already running (pid $(cat "$TG_METRICS_PID"))"
+        echo "    log: $TG_METRICS_LOG"
+        return
+      fi
+      rm -f "$TG_METRICS_PID"
+      echo "==> starting telemetrygen metrics" \
+           "(count=${TG_METRIC_COUNT:-50}, seed=${TG_METRIC_SEED:-0}," \
+           "workers=${TG_METRICS_WORKERS:-2}, rate=${TG_METRICS_RATE:-10}/s/worker)"
+      # Single background Python OTLP process; inherits all TG_* env vars.
+      nohup python3 "$TG_METRICS_GEN" >> "$TG_METRICS_LOG" 2>&1 &
+      local pid=$!
+      echo "$pid" > "$TG_METRICS_PID"
+      # Brief health check: if it died immediately (e.g. missing opentelemetry
+      # deps because not run under `nix develop`), surface the log.
+      sleep 2
+      if ! kill -0 "$pid" 2>/dev/null; then
+        echo "ERROR: telemetrygen metrics exited immediately. Recent log:" >&2
+        tail -n 20 "$TG_METRICS_LOG" >&2
+        rm -f "$TG_METRICS_PID"
+        echo >&2 "Hint: run inside 'nix develop' so python3 has opentelemetry-sdk." >&2
+        return 1
+      fi
+      echo "==> running (pid $pid)  ->  ${TG_OTLP_ENDPOINT:-127.0.0.1:11050}"
+      echo "    log: $TG_METRICS_LOG"
+      echo "==> metric names (name <TAB> type):"
+      python3 "$TG_METRICS_GEN" --list | sed 's/^/    /'
       ;;
     down)
-      exec podman rm -f --ignore "${TG_METRICS_SVCS[@]}"
+      if [ ! -f "$TG_METRICS_PID" ]; then
+        echo "==> telemetrygen metrics not running (no pidfile)"
+        return
+      fi
+      local pid
+      pid="$(cat "$TG_METRICS_PID")"
+      if kill -0 "$pid" 2>/dev/null; then
+        kill -TERM "$pid" 2>/dev/null || true
+        # Give it a moment to flush a final export on graceful shutdown.
+        local i
+        for i in $(seq 1 20); do
+          kill -0 "$pid" 2>/dev/null || break
+          sleep 0.25
+        done
+        if kill -0 "$pid" 2>/dev/null; then
+          echo "==> process did not exit; sending SIGKILL"
+          kill -KILL "$pid" 2>/dev/null || true
+        fi
+        echo "==> stopped telemetrygen metrics (pid $pid)"
+      else
+        echo "==> pid $pid not alive (stale pidfile)"
+      fi
+      rm -f "$TG_METRICS_PID"
       ;;
     *)
-      echo "Usage: testbedctl telemetrygen metrics <up|down>" >&2
+      cat >&2 <<EOF
+Usage: testbedctl telemetrygen metrics <up|down>
+
+Runs a SINGLE Python OTLP process that emits '${TG_METRIC_COUNT:-50}' distinct
+metrics, each with a randomized name and a randomized type (Gauge/Sum/Histogram)
+— replacing the old many-container telemetrygen setup.
+
+Tunables (env):
+  TG_METRIC_COUNT     number of distinct metric names (default 50)
+  TG_METRIC_SEED      RNG seed for reproducible names (default 0; change to reshuffle)
+  TG_OTLP_ENDPOINT    OTLP host:port (default 127.0.0.1:11050; runs on host, not in a container)
+  TG_OTLP_URL_PATH    OTLP HTTP path (default /v1/otlp/v1/metrics)
+  TG_METRICS_INTERVAL export interval (default 5s)
+  TG_METRICS_RATE     observations/sec per worker (default 10)
+  TG_METRICS_WORKERS  worker threads (default 2)
+EOF
       [ -n "$action" ] && echo "Unknown action: $action" >&2
       exit 1
       ;;
@@ -100,10 +171,11 @@ cmd_telemetrygen() {
 Usage:
   testbedctl telemetrygen up            Start OTLP trace ingestion
   testbedctl telemetrygen down          Stop trace ingestion
-  testbedctl telemetrygen metrics up    Start continuous metrics (gauge/sum/histogram)
+  testbedctl telemetrygen metrics up    Start continuous metrics (~50 randomized metric names)
   testbedctl telemetrygen metrics down  Stop metrics ingestion
 
-Metrics tunables (env): TG_OTLP_ENDPOINT, TG_METRICS_INTERVAL, TG_METRICS_RATE, TG_METRICS_WORKERS
+Metrics tunables (env): TG_METRIC_COUNT, TG_METRIC_SEED, TG_OTLP_ENDPOINT,
+                       TG_METRICS_INTERVAL, TG_METRICS_RATE, TG_METRICS_WORKERS
 EOF
       [ -n "${1:-}" ] && echo "Unknown telemetrygen action: $1" >&2
       exit 1

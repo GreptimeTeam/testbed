@@ -22,6 +22,9 @@
           ps.pyarrow
           ps.boto3
           ps.fastavro
+          # OTLP metrics generator (datasources/telemetrygen/gen_metrics.py)
+          ps.opentelemetry-sdk
+          ps.opentelemetry-exporter-otlp-proto-http
         ]);
       in
       {
