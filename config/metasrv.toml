@@ -63,4 +63,4 @@ max_log_files = 720
 enable_heap_profiling = true
 
 [gc]
-enabled = true
+enable = true
