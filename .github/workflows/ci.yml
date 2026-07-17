@@ -1,0 +1,74 @@
+name: ci
+
+# Smoke test the testbed on every push and pull request: stand up a
+# single-node GreptimeDB (standalone-fs) using the LATEST greptimedb release
+# binary and assert that SQL works (a write that round-trips through the
+# client port).
+on:
+  push:
+  pull_request:
+
+# Cancel a superseded run on the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: standalone-fs smoke (latest greptimedb release)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nix (with flake support)
+        uses: DeterminateSystems/nix-installer-action@v22
+
+      - name: Cache Nix builds
+        # Zero-config cache for public repos; speeds up the `nix develop`
+        # devShell build across runs.
+        uses: DeterminateSystems/magic-nix-cache-action@v14
+
+      - name: Download latest GreptimeDB release binary
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          auth=()
+          [ -n "${GH_TOKEN:-}" ] && auth=(-H "Authorization: Bearer $GH_TOKEN")
+          # Pick the GNU linux-amd64 tarball (skip the centos variant).
+          url="$(curl -fsSL "${auth[@]}" \
+            https://api.github.com/repos/GreptimeTeam/greptimedb/releases/latest \
+            | grep -oE 'https://[^"]+greptime-linux-amd64-v[0-9][^"]*\.tar\.gz' \
+            | grep -v centos | head -n1)"
+          echo "Latest release asset: $url"
+          curl -fsSL -o /tmp/greptime.tgz "$url"
+          mkdir -p /tmp/greptime-extract
+          tar xzf /tmp/greptime.tgz -C /tmp/greptime-extract
+          bin="$(find /tmp/greptime-extract -type f -name greptime | head -n1)"
+          install -m 0755 "$bin" ./greptime
+          ./greptime --version
+
+      - name: Temporarily strip unreleased iceberg_manifest plugin from config
+        # config/standalone-fs.toml enables the `iceberg_manifest` plugin, which
+        # is newer than the latest greptimedb release (the release hard-fails on
+        # unknown plugin variants). Once the greptimedb patch to tolerate
+        # unknown plugin options lands, DELETE THIS STEP and the config will
+        # work against the release as-is.
+        run: |
+          sed -i -e '/^\[\[plugins\]\]$/d' -e '/^iceberg_manifest[[:space:]]*=/d' \
+            config/standalone-fs.toml
+          echo "Stripped iceberg_manifest plugin block from config/standalone-fs.toml"
+
+      - name: Start standalone-fs and run a SQL smoke test
+        run: nix develop --command bash ci/smoke.sh
+
+      - name: Dump standalone-fs logs on failure
+        if: failure()
+        run: |
+          nix develop --command bash -c 'process-compose process list || true'
+          nix develop --command bash -c 'process-compose process logs standalone-fs --tail 200 || true' || true
+
+      - name: Tear down
+        if: always()
+        run: nix develop --command bash -c 'process-compose down || true' || true
