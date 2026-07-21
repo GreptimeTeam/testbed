@@ -7,13 +7,13 @@ set -euo pipefail
 # grpc_bind_addr    gRPC bind address   (e.g. "0.0.0.0:11020")
 # grpc_server_addr  gRPC server address (e.g. "127.0.0.1:11020")
 # http_addr         HTTP address        (e.g. "0.0.0.0:11021")
-# store_addrs       Etcd endpoints      (default: "127.0.0.1:11001")
+# store_addrs       Postgres URL        (default: the shared Postgres metadata/election backend)
 
 NODE_ID=$1
 GRPC_BIND=$2
 GRPC_SERVER=$3
 HTTP_ADDR=$4
-STORE_ADDRS="${5:-127.0.0.1:11001}"
+STORE_ADDRS="${5:-postgres://postgres@127.0.0.1:11080/postgres}"
 
 GREPTIME_BIN="${GREPTIME_BIN:-./greptime}"
 GREPTIME_HOME="${GREPTIME_HOME:-./.greptimedb}"
@@ -28,9 +28,9 @@ sed \
   -e "s|__GRPC_BIND_ADDR__|${GRPC_BIND}|g" \
   -e "s|__GRPC_SERVER_ADDR__|${GRPC_SERVER}|g" \
   -e "s|__HTTP_ADDR__|${HTTP_ADDR}|g" \
+  -e "s|__STORE_ADDR__|${STORE_ADDRS}|g" \
   -e "s|__LOG_DIR__|${DATA_DIR}/logs|g" \
   "${CONFIG_TEMPLATE}" > "${CONFIG}"
 
 exec ${GREPTIME_BIN} metasrv start \
-  --config-file "${CONFIG}" \
-  --store-addrs "${STORE_ADDRS}"
+  --config-file "${CONFIG}"

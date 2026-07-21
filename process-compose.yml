@@ -7,28 +7,6 @@ vars:
   METASRV_ADDR: "127.0.0.1:11020"
 
 processes:
-  etcd:
-    command: |
-      etcd \
-        --data-dir {{.GREPTIME_HOME}}/etcd \
-        --listen-client-urls http://0.0.0.0:11001 \
-        --advertise-client-urls http://127.0.0.1:11001 \
-        --listen-peer-urls http://0.0.0.0:11002 \
-        --initial-advertise-peer-urls http://127.0.0.1:11002 \
-        --initial-cluster default=http://127.0.0.1:11002
-    environment:
-      - ETCDCTL_ENDPOINTS=http://127.0.0.1:11001
-    readiness_probe:
-      exec:
-        command: "ETCDCTL_ENDPOINTS=http://127.0.0.1:11001 etcdctl endpoint health"
-      initial_delay_seconds: 2
-      period_seconds: 3
-      timeout_seconds: 3
-    availability:
-      restart: on_failure
-      max_restarts: 5
-    disabled: true
-
   garage:
     command: |
       garage -c garage.toml server
@@ -58,7 +36,7 @@ processes:
     command: |
       GREPTIME_BIN={{.GREPTIME_BIN}} GREPTIME_HOME={{.GREPTIME_HOME}} scripts/start-metasrv 0 0.0.0.0:11020 127.0.0.1:11020 0.0.0.0:11021
     depends_on:
-      etcd:
+      postgres:
         condition: process_healthy
     readiness_probe:
       exec:
@@ -75,7 +53,7 @@ processes:
     command: |
       GREPTIME_BIN={{.GREPTIME_BIN}} GREPTIME_HOME={{.GREPTIME_HOME}} scripts/start-metasrv 1 0.0.0.0:11022 127.0.0.1:11022 0.0.0.0:11023
     depends_on:
-      etcd:
+      postgres:
         condition: process_healthy
     readiness_probe:
       exec:

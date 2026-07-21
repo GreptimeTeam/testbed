@@ -61,7 +61,7 @@ Starts garage → garage-setup → standalone.
 process-compose up standalone-fs
 ```
 
-Single-node GreptimeDB using **local disk** instead of Garage S3. No dependencies — starts immediately without garage/etcd. Data lives under `.greptimedb/standalone-fs/`. Reuses ports 11040-11043. Fastest way to iterate on GreptimeDB itself.
+Single-node GreptimeDB using **local disk** instead of Garage S3. No dependencies — starts immediately without garage/postgres. Data lives under `.greptimedb/standalone-fs/`. Reuses ports 11040-11043. Fastest way to iterate on GreptimeDB itself.
 
 ### Enterprise Active/Standby Standalone
 
@@ -73,7 +73,7 @@ Two enterprise standalone instances form an **active/standby** pair: they share 
 
 Starts the chain: garage → garage-setup → postgres → standby-a → standby-b → haproxy-standby.
 
-**Requires an ENTERPRISE `greptime` binary** — provide it in place as `./greptime` (or set `GREPTIME_BIN`), the same path the other modes use. The OSS `./greptime` cannot run this mode (it does not load the `[enterprise_standalone]` options). The election backend is **Postgres**, not etcd — the enterprise active/standby election is built on the external RDS metadata store (etcd election only exists for metasrv in the distributed cluster).
+**Requires an ENTERPRISE `greptime` binary** — provide it in place as `./greptime` (or set `GREPTIME_BIN`), the same path the other modes use. The OSS `./greptime` cannot run this mode (it does not load the `[enterprise_standalone]` options). The election backend is **Postgres** (the shared `postgres` process on port 11080) — the enterprise active/standby election is built on the external RDS metadata store.
 
 Failover: stop the leader (`process-compose process stop standby-a`) and the follower is elected leader automatically; `haproxy-standby` then routes to it with no client-side change. Restarting a node with accumulated data replays its local WAL and re-opens shared-S3 regions, so the standby config sets `init_regions_in_background = true` — the HTTP server binds within ~1–2s (regions open in the background) and the node comes straight back up as a follower instead of being restart-killed by the readiness probe. Inspect roles directly:
 
@@ -88,7 +88,7 @@ curl -s http://127.0.0.1:11074/status/standalone/role   # standby-b
 process-compose up haproxy
 ```
 
-Starts the full chain: etcd → garage → garage-setup → metasrv → datanode-{0,1} → frontend → haproxy.
+Starts the full chain: postgres → metasrv → datanode-{0,1} → frontend → haproxy, with garage → garage-setup running in parallel (datanodes depend on both metasrv and garage-setup). Postgres is the metasrv metadata + election backend (etcd is no longer used).
 
 Requires a `greptime` binary in the project root. All processes start in dependency order with health checks. Garage data is wiped on each start.
 
@@ -97,8 +97,8 @@ Process-compose server runs on port **11099** (set via `PC_PORT_NUM` in `.env`).
 ## Cluster Topology
 
 ```
-etcd -> metasrv -> datanode-{0,1} -> frontend -> haproxy
-      -> garage -> garage-setup -(setup complete)-> datanodes
+postgres -> metasrv -> datanode-{0,1} -> frontend -> haproxy
+garage -> garage-setup -(setup complete)-> datanodes
 
 # Enterprise active/standby (process-compose up haproxy-standby):
 garage -> garage-setup -(setup complete)-> standby-a, standby-b
@@ -107,7 +107,7 @@ postgres -> standby-a, standby-b -(election via Postgres)-> haproxy-standby
 
 ### Default Processes (started via `process-compose up haproxy`)
 
-- **etcd**: metadata backend for metasrv (port 11001)
+- **postgres**: Postgres metadata + election backend for metasrv (port 11080), trust auth, data under `.greptimedb/postgres/`
 - **garage**: S3 storage for datanodes (port 11010, bucket `test-bucket`)
 - **garage-setup**: exits after creating bucket/key/layout, writes creds to `.greptimedb/s3.env`
 - **metasrv**: cluster coordinator (port 11020 gRPC, 11021 HTTP)
@@ -159,9 +159,8 @@ Active/standby (`haproxy-standby`): the client-facing ports 11040-11043 route to
 | Service | Ports |
 |---|---|
 | process-compose | 11099 (server) |
-| etcd | 11001 (client), 11002 (peer) |
 | garage | 11010 (S3 API), 11011 (RPC), 11012 (web) |
-| postgres (active/standby) | 11080 (metadata + election backend) |
+| postgres (metasrv + active/standby) | 11080 (metadata + election backend) |
 | metasrv | 11020 (gRPC), 11021 (HTTP) |
 | metasrv-1 | 11022 (gRPC), 11023 (HTTP) |
 | datanode-0 | 11030 (gRPC), 11031 (HTTP) |

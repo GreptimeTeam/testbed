@@ -48,7 +48,7 @@ process-compose up haproxy-standby
 Two **enterprise** standalone instances form an active/standby pair sharing Garage S3 (main data store) and a **Postgres** table (shared metadata + leader election); each keeps its own dedicated WAL. Only the elected **leader** accepts writes; the **follower** rejects writes and serves read-refreshed queries. `haproxy-standby` routes the client ports to whichever node is currently leader.
 
 - Requires an **enterprise** `greptime` binary provided in place as `./greptime` (or via `GREPTIME_BIN`) — the same path every other mode uses. The OSS binary cannot run this mode.
-- Election backend is **Postgres** (not etcd) — the enterprise active/standby election is built on the external RDS metadata store.
+- Election backend is **Postgres** (the shared `postgres` process on port 11080) — the enterprise active/standby election is built on the external RDS metadata store.
 - Clients use the same ports 11040-11043 as every other mode; traffic always reaches the active leader.
 
 | Protocol | Address |

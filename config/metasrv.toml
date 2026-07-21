@@ -7,11 +7,15 @@
 ## The working home directory.
 data_home = "__DATA_HOME__"
 
-## Store server address(es) - etcd backend.
-store_addrs = ["127.0.0.1:11001"]
+## Store server address(es) - Postgres backend. This is the same Postgres
+## instance the active/standby standalone mode uses (port 11080). metasrv and
+## standalone both default to the 'greptime_metakv' table, but the distributed
+## cluster and active/standby never run simultaneously.
+store_addrs = ["__STORE_ADDR__"]
 
-## The datastore for meta server.
-backend = "etcd_store"
+## The datastore for meta server. Postgres provides BOTH the metadata KV store
+## and metasrv leader election (etcd is no longer used).
+backend = "postgres_store"
 
 ## Datanode selector type: "round_robin" | "lease_based" | "load_based"
 selector = "round_robin"

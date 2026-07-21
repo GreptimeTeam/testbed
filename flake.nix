@@ -40,7 +40,6 @@
             postgresql.out
             mariadb
             process-compose
-            etcd
             haproxy
             awscli2
             duckdb

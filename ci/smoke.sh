@@ -2,7 +2,7 @@
 # CI smoke test for the testbed.
 #
 # Starts the single-node standalone-fs server (local File backend — no
-# garage/etcd needed) and asserts that at least one SQL statement works
+# garage/postgres needed) and asserts that at least one SQL statement works
 # (a write that round-trips through the client port).
 #
 # Run inside `nix develop` (which provides process-compose, psql and curl):
