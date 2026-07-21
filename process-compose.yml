@@ -232,3 +232,101 @@ processes:
       restart: on_failure
       max_restarts: 5
     disabled: true
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Enterprise active/standby standalone mode
+  #
+  # Two enterprise standalone instances share Garage S3 (main data store) and a
+  # Postgres metadata table (shared metadata + leader election). Each has its
+  # own local WAL. Only the elected leader accepts writes; the follower rejects
+  # writes (HTTP 503). haproxy-standby routes client traffic to the active
+  # leader via /status/standalone/is_leader.
+  #
+  # Requires an ENTERPRISE greptime binary in the project root (./greptime) or
+  # GREPTIME_BIN pointing at one — the OSS ./greptime cannot run this mode.
+  # Start the whole chain with:  process-compose up haproxy-standby
+  # Chain: garage -> garage-setup -> postgres -> standby-a -> standby-b -> haproxy-standby
+  # ─────────────────────────────────────────────────────────────────────
+
+  # Postgres metadata + election backend. Idempotently inits the data dir, then
+  # runs the server in the foreground. Trust auth, localhost only.
+  postgres:
+    command: |
+      GREPTIME_HOME={{.GREPTIME_HOME}} scripts/start-postgres 11080
+    readiness_probe:
+      exec:
+        command: "pg_isready -h 127.0.0.1 -p 11080 -U postgres -d postgres"
+      initial_delay_seconds: 2
+      period_seconds: 3
+      timeout_seconds: 3
+    availability:
+      restart: on_failure
+      max_restarts: 5
+    disabled: true
+
+  # Active leader candidate. Binds internal ports 11070-11073.
+  standby-a:
+    command: |
+      GREPTIME_HOME={{.GREPTIME_HOME}} GREPTIME_BIN={{.GREPTIME_BIN}} scripts/start-standalone-standby a 0.0.0.0:11070 0.0.0.0:11071 0.0.0.0:11072 0.0.0.0:11073
+    depends_on:
+      garage-setup:
+        condition: process_completed_successfully
+      postgres:
+        condition: process_healthy
+    readiness_probe:
+      exec:
+        command: "curl -sf http://127.0.0.1:11070/health"
+      initial_delay_seconds: 15
+      period_seconds: 3
+      timeout_seconds: 5
+    availability:
+      restart: on_failure
+      max_restarts: 5
+    disabled: true
+
+  # Standby follower. Binds internal ports 11074-11077. Started after standby-a
+  # is healthy to avoid concurrent metadata-table creation races; both then
+  # converge via election (one leader, one follower).
+  standby-b:
+    command: |
+      GREPTIME_HOME={{.GREPTIME_HOME}} GREPTIME_BIN={{.GREPTIME_BIN}} scripts/start-standalone-standby b 0.0.0.0:11074 0.0.0.0:11075 0.0.0.0:11076 0.0.0.0:11077
+    depends_on:
+      garage-setup:
+        condition: process_completed_successfully
+      postgres:
+        condition: process_healthy
+      standby-a:
+        condition: process_healthy
+    readiness_probe:
+      exec:
+        command: "curl -sf http://127.0.0.1:11074/health"
+      initial_delay_seconds: 15
+      period_seconds: 3
+      timeout_seconds: 5
+    availability:
+      restart: on_failure
+      max_restarts: 5
+    disabled: true
+
+  # Client-facing entry point (11040-11043). Routes ONLY to the elected leader
+  # via /status/standalone/is_leader health checks. Readiness rides through the
+  # startup election window (no leader yet => 503 => not ready; passes once a
+  # leader is elected, typically a few seconds after both standalones are up).
+  haproxy-standby:
+    command: |
+      haproxy -f haproxy-standby.cfg
+    depends_on:
+      standby-a:
+        condition: process_healthy
+      standby-b:
+        condition: process_healthy
+    readiness_probe:
+      exec:
+        command: "curl -sf http://127.0.0.1:11040/health"
+      initial_delay_seconds: 5
+      period_seconds: 3
+      timeout_seconds: 5
+    availability:
+      restart: on_failure
+      max_restarts: 5
+    disabled: true

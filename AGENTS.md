@@ -13,8 +13,10 @@ config/               GreptimeDB component TOML templates (use __PLACEHOLDER__ v
   datanode.toml         Datanode template (S3 storage, WAL, region engines)
   standalone.toml       Standalone template (all-in-one with S3 storage)
   standalone-fs.toml    Standalone template (all-in-one with local File storage)
+  standalone-standby.toml  Enterprise active/standby standalone template (S3 + Postgres metadata/election)
   flownode.toml         Flownode template (flow engine, grpc, http)
 haproxy.cfg           Proxy routing HTTP/gRPC/MySQL/PostgreSQL to the frontend
+haproxy-standby.cfg   Proxy routing client ports to the active/standby LEADER only
 garage.toml           Garage S3-compatible storage config
 scripts/
   garage-setup          One-shot init: creates bucket, API key, layout in garage
@@ -24,6 +26,8 @@ scripts/
   start-flownode        Wrapper: generates flownode config from template, starts flownode
   start-standalone      Wrapper: generates standalone config from template with S3 creds
   start-standalone-fs   Wrapper: generates standalone-fs config from template (local File backend, no S3)
+  start-standalone-standby  Wrapper: generates per-node active/standby config from template, starts one node
+  start-postgres        Wrapper: idempotent initdb + foreground Postgres (metadata + election backend)
   garage-local          Standalone garage launcher (not used by process-compose)
 .env                  Process-compose env vars (PC_PORT_NUM)
 .greptimedb/          Runtime data (gitignored), created on first start
@@ -59,6 +63,25 @@ process-compose up standalone-fs
 
 Single-node GreptimeDB using **local disk** instead of Garage S3. No dependencies — starts immediately without garage/etcd. Data lives under `.greptimedb/standalone-fs/`. Reuses ports 11040-11043. Fastest way to iterate on GreptimeDB itself.
 
+### Enterprise Active/Standby Standalone
+
+```bash
+process-compose up haproxy-standby
+```
+
+Two enterprise standalone instances form an **active/standby** pair: they share **Garage S3 as the main data store** and a **Postgres** table for shared metadata + leader **election**, while each keeps its own **dedicated local WAL**. Only the elected **leader** accepts writes; the **follower** rejects writes with HTTP 503 and can serve read-refreshed queries. `haproxy-standby` routes client traffic (11040-11043) to whichever node is currently leader, using each node's `/status/standalone/is_leader` endpoint (200 = leader, 503 = follower).
+
+Starts the chain: garage → garage-setup → postgres → standby-a → standby-b → haproxy-standby.
+
+**Requires an ENTERPRISE `greptime` binary** — provide it in place as `./greptime` (or set `GREPTIME_BIN`), the same path the other modes use. The OSS `./greptime` cannot run this mode (it does not load the `[enterprise_standalone]` options). The election backend is **Postgres**, not etcd — the enterprise active/standby election is built on the external RDS metadata store (etcd election only exists for metasrv in the distributed cluster).
+
+Failover: stop the leader (`process-compose process stop standby-a`) and the follower is elected leader automatically; `haproxy-standby` then routes to it with no client-side change. Restarting a node with accumulated data replays its local WAL and re-opens shared-S3 regions, so the standby config sets `init_regions_in_background = true` — the HTTP server binds within ~1–2s (regions open in the background) and the node comes straight back up as a follower instead of being restart-killed by the readiness probe. Inspect roles directly:
+
+```bash
+curl -s http://127.0.0.1:11070/status/standalone/role   # standby-a: {"role":"leader"|"follower", "is_leader":true|false}
+curl -s http://127.0.0.1:11074/status/standalone/role   # standby-b
+```
+
 ### GreptimeDB Distributed Cluster
 
 ```bash
@@ -76,6 +99,10 @@ Process-compose server runs on port **11099** (set via `PC_PORT_NUM` in `.env`).
 ```
 etcd -> metasrv -> datanode-{0,1} -> frontend -> haproxy
       -> garage -> garage-setup -(setup complete)-> datanodes
+
+# Enterprise active/standby (process-compose up haproxy-standby):
+garage -> garage-setup -(setup complete)-> standby-a, standby-b
+postgres -> standby-a, standby-b -(election via Postgres)-> haproxy-standby
 ```
 
 ### Default Processes (started via `process-compose up haproxy`)
@@ -87,6 +114,15 @@ etcd -> metasrv -> datanode-{0,1} -> frontend -> haproxy
 - **datanode-{0,1}**: store data in garage via S3 protocol, each uses `scripts/start-datanode`
 - **frontend**: query layer, internal (ports 11050-11053 for HTTP/gRPC/MySQL/PostgreSQL); fronted by haproxy, not exposed to clients
 - **haproxy**: client-facing entry point (ports 11040-11043) load-balancing the frontend instance(s)
+
+### Active/Standby Processes (started via `process-compose up haproxy-standby`)
+
+- **garage**: shared S3 object storage for both standalones (same as above)
+- **garage-setup**: writes creds to `.greptimedb/s3.env`
+- **postgres**: Postgres metadata + election backend (port 11080), trust auth, data under `.greptimedb/postgres/`
+- **standby-a**: enterprise standalone, internal (ports 11070-11073 for HTTP/gRPC/MySQL/PostgreSQL), dedicated WAL under `.greptimedb/standby-a/wal`
+- **standby-b**: enterprise standalone, internal (ports 11074-11077), dedicated WAL under `.greptimedb/standby-b/wal`
+- **haproxy-standby**: client-facing entry point (ports 11040-11043) routing ONLY to the elected leader
 
 ### Optional Processes (start manually)
 
@@ -116,6 +152,8 @@ Frontend instances are internal and not exposed to clients (frontend-0: 11050-11
 
 Standalone (when started): binds the same client-facing ports 11040-11043, so all client code (e.g. `scripts/read_iceberg.py`) works identically in either mode.
 
+Active/standby (`haproxy-standby`): the client-facing ports 11040-11043 route to whichever of standby-a/standby-b is currently the elected leader. The same client code works unchanged. (During the startup election window, or while failing over, these ports return 503 until a new leader is published.)
+
 ## Port Allocation
 
 | Service | Ports |
@@ -123,13 +161,17 @@ Standalone (when started): binds the same client-facing ports 11040-11043, so al
 | process-compose | 11099 (server) |
 | etcd | 11001 (client), 11002 (peer) |
 | garage | 11010 (S3 API), 11011 (RPC), 11012 (web) |
+| postgres (active/standby) | 11080 (metadata + election backend) |
 | metasrv | 11020 (gRPC), 11021 (HTTP) |
 | metasrv-1 | 11022 (gRPC), 11023 (HTTP) |
 | datanode-0 | 11030 (gRPC), 11031 (HTTP) |
 | datanode-1 | 11032 (gRPC), 11033 (HTTP) |
+| standby-a | 11070 (HTTP), 11071 (gRPC), 11072 (MySQL), 11073 (PostgreSQL) — internal |
+| standby-b | 11074 (HTTP), 11075 (gRPC), 11076 (MySQL), 11077 (PostgreSQL) — internal |
 | frontend | 11050 (HTTP), 11051 (gRPC), 11052 (MySQL), 11053 (PostgreSQL) — internal |
 | frontend-1 | 11054 (HTTP), 11055 (gRPC), 11056 (MySQL), 11057 (PostgreSQL) — internal |
 | haproxy | 11040 (HTTP), 11041 (gRPC), 11042 (MySQL), 11043 (PostgreSQL) — client-facing |
+| haproxy-standby | 11040 (HTTP), 11041 (gRPC), 11042 (MySQL), 11043 (PostgreSQL) — client-facing, leader-only |
 | flownode | 11060 (gRPC), 11061 (HTTP) |
 | standalone | 11040 (HTTP), 11041 (gRPC), 11042 (MySQL), 11043 (PostgreSQL) — client-facing, shared with haproxy |
 
@@ -165,7 +207,9 @@ rm -rf .greptimedb                            # clean all data
 - **Reset cluster**: `process-compose down && ./testbedctl clean && process-compose up haproxy`
 - **Resume cluster**: `process-compose up haproxy` (preserves data if `.greptimedb` is not deleted; garage-setup will reuse existing credentials)
 - **Change greptime binary**: replace `./greptime` or set `GREPTIME_BIN` in `process-compose.yml` vars
-- **Adjust ports**: edit `process-compose.yml` (process ports) and `haproxy.cfg` (proxy ports)
+- **Active/standby binary**: provide an enterprise build as `./greptime` (or set `GREPTIME_BIN`); start with `process-compose up haproxy-standby`
+- **Test failover**: `process-compose process stop standby-a` (leader) → standby-b is elected and `haproxy-standby` reroutes automatically. Inspect roles via `/status/standalone/role` on ports 11070/11074.
+- **Adjust ports**: edit `process-compose.yml` (process ports) and `haproxy.cfg` / `haproxy-standby.cfg` (proxy ports)
 - **Run standalone only**: `process-compose up standalone` (auto-starts garage + garage-setup)
 - **testbedctl s3**: auto-sources `.greptimedb/s3.env` credentials before running `aws s3`
 

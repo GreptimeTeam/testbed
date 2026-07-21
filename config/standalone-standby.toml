@@ -1,0 +1,230 @@
+## GreptimeDB Enterprise Standalone (Active/Standby) Configuration
+##
+## Active/standby mode: TWO enterprise standalone instances share Garage S3 as
+## the main data store and a Postgres metadata table for shared metadata +
+## leader election. Each instance has its OWN local WAL (dedicated, never
+## shared). Only the elected leader accepts writes; the follower rejects writes
+## with HTTP 503. haproxy-standby routes client traffic to the active leader via
+## the /status/standalone/is_leader health check.
+##
+## Requires an ENTERPRISE greptime binary (the OSS ./greptime does NOT load the
+## [enterprise_standalone] section). Provide one in place as ./greptime (or set GREPTIME_BIN).
+##
+## This is a template. scripts/start-standalone-standby generates the final
+## per-node config by substituting __PLACEHOLDER__ vars (node-specific listen
+## addresses, WAL/log dirs, data_home, S3 credentials, and the Postgres metadata
+## store URL).
+
+## Initialize regions in the BACKGROUND during startup. This is important for
+## active/standby: on restart a node replays its local WAL and re-opens the
+## shared-S3 regions, which can take tens of seconds. With background init the
+## datanode opens regions (and replays WAL) asynchronously, so the HTTP server
+## binds within ~1-2s and process-compose's readiness probe passes quickly —
+## letting the node come straight up as a follower without restart-looping.
+## Regions then become queryable as they finish opening in the background.
+init_regions_in_background = true
+
+## Parallelism of initializing regions.
+init_regions_parallelism = 16
+
+## The HTTP server options.
+[http]
+addr = "__HTTP_ADDR__"
+timeout = "0s"
+body_limit = "64MB"
+enable_cors = true
+
+## The gRPC server options.
+## bind_addr listens for inbound gRPC; server_addr is the advertised identity
+## used by election (candidate value) and by the follower-read refresh loop to
+## reach the leader. Both are substituted per node.
+[grpc]
+bind_addr = "__GRPC_BIND_ADDR__"
+server_addr = "__GRPC_SERVER_ADDR__"
+runtime_size = 8
+
+## MySQL server options.
+[mysql]
+enable = true
+addr = "__MYSQL_ADDR__"
+runtime_size = 2
+
+## PostgreSQL server options.
+[postgres]
+enable = true
+addr = "__POSTGRES_ADDR__"
+runtime_size = 2
+
+## OpenTSDB protocol options.
+[opentsdb]
+enable = true
+
+## InfluxDB protocol options.
+[influxdb]
+enable = true
+
+## Jaeger protocol options.
+[jaeger]
+enable = true
+
+## Prometheus remote storage options.
+[prom_store]
+enable = true
+with_metric_engine = true
+
+## The WAL options.
+## Each node MUST have its own WAL directory (the WAL is never shared between
+## the two standalones). The wrapper script points this at a per-node path.
+[wal]
+provider = "raft_engine"
+dir = "__WAL_DIR__"
+file_size = "128MB"
+purge_threshold = "1GB"
+purge_interval = "1m"
+read_batch_size = 128
+sync_write = false
+enable_log_recycle = true
+prefill_log_files = false
+sync_period = "10s"
+recovery_parallelism = 2
+
+## Procedure storage options.
+[procedure]
+max_retry_times = 3
+retry_delay = "500ms"
+max_running_procedures = 128
+
+## Flow engine options.
+[flow]
+
+## The query engine options.
+[query]
+parallelism = 0
+memory_pool_size = "50%"
+
+## The data storage options.
+## BOTH nodes point at the SAME S3 bucket + root ('standby') so they share
+## object-storage data. data_home is per-node (local working dir). S3 creds come
+## from .greptimedb/s3.env via the wrapper script.
+[storage]
+data_home = "__DATA_HOME__"
+type = "S3"
+bucket = "__S3_BUCKET__"
+## Shared root prefix — identical on both nodes so region data is shared.
+root = "standby"
+endpoint = "__S3_ENDPOINT__"
+region = "__S3_REGION__"
+access_key_id = "__S3_ACCESS_KEY__"
+secret_access_key = "__S3_SECRET_KEY__"
+enable_virtual_host_style = false
+
+## The HTTP client options for S3 storage.
+[storage.http_client]
+pool_max_idle_per_host = 1024
+connect_timeout = "30s"
+timeout = "30s"
+pool_idle_timeout = "90s"
+skip_ssl_validation = false
+
+## The region engine options.
+[[region_engine]]
+
+[region_engine.mito]
+worker_channel_size = 128
+worker_request_batch_size = 64
+manifest_checkpoint_distance = 10
+compress_manifest = false
+auto_flush_interval = "1h"
+enable_write_cache = false
+write_cache_size = "5GiB"
+preload_index_cache = true
+index_cache_percent = 20
+enable_refill_cache_on_read = true
+manifest_cache_size = "256MB"
+sst_write_buffer_size = "8MB"
+max_concurrent_scan_files = 384
+allow_stale_entries = false
+scan_memory_limit = "unlimited"
+scan_memory_on_exhausted = "fail"
+min_compaction_interval = "0m"
+default_flat_format = true
+
+[region_engine.mito.index]
+staging_size = "2GB"
+staging_ttl = "7d"
+metadata_cache_size = "64MiB"
+content_cache_size = "128MiB"
+content_cache_page_size = "64KiB"
+result_cache_size = "128MiB"
+
+[region_engine.mito.inverted_index]
+create_on_flush = "auto"
+create_on_compaction = "auto"
+apply_on_query = "auto"
+mem_threshold_on_create = "auto"
+
+[region_engine.mito.fulltext_index]
+create_on_flush = "auto"
+create_on_compaction = "auto"
+apply_on_query = "auto"
+mem_threshold_on_create = "auto"
+
+[region_engine.mito.bloom_filter_index]
+create_on_flush = "auto"
+create_on_compaction = "auto"
+apply_on_query = "auto"
+mem_threshold_on_create = "auto"
+
+[region_engine.mito.gc]
+enable = false
+lingering_time = "1m"
+
+[[region_engine]]
+[region_engine.file]
+
+[[region_engine]]
+[region_engine.metric]
+sparse_primary_key_encoding = true
+
+## The logging options.
+[logging]
+dir = "__LOG_DIR__"
+level = "info"
+append_stdout = true
+log_format = "text"
+max_log_files = 720
+
+## The slow query log options.
+[slow_query]
+enable = true
+record_type = "system_table"
+threshold = "30s"
+sample_ratio = 1.0
+
+## The memory options.
+[memory]
+enable_heap_profiling = true
+
+## ─────────────────────────────────────────────────────────────────────────
+## Enterprise active/standby options (enterprise binary only).
+##
+## Both nodes share the SAME Postgres metadata store (table_name + store URL),
+## the SAME election key prefix, and the SAME S3 data root. Only the per-node
+## election.server_addr differs (each node's advertised gRPC address).
+## ─────────────────────────────────────────────────────────────────────────
+[enterprise_standalone.metadata_store]
+backend = "postgres"
+store_addrs = ["__META_STORE_ADDR__"]
+table_name = "greptime_metakv"
+max_txn_ops = 128
+auto_create_schema = true
+
+[enterprise_standalone.metadata_store.election]
+enabled = true
+## Run the follower read-refresh loop so the hot follower can serve queries for
+## durably published data (the integration tests enable this).
+enable_follower_read = true
+## This node's election identity (advertised gRPC address). Differs per node.
+server_addr = "__ELECTION_SERVER_ADDR__"
+## Shared election key prefix — identical on both nodes.
+store_key_prefix = "ent-standby-standby"

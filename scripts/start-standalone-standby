@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+#
+# start-standalone-standby <node_name> <http_addr> <grpc_addr> <mysql_addr> <postgres_addr>
+#
+# Starts ONE node of the Enterprise active/standby standalone pair. Generates a
+# per-node config from config/standalone-standby.toml, then execs the enterprise
+# greptime standalone.
+#
+# Requires an ENTERPRISE greptime binary. Provide it in place as ./greptime (or
+# set GREPTIME_BIN) — the same binary path the other modes use. The OSS
+# ./greptime cannot run active/standby mode — it does not load the
+# [enterprise_standalone] options.
+#
+# Usage (see process-compose.yml for the real invocation):
+#   scripts/start-standalone-standby a 0.0.0.0:11070 0.0.0.0:11071 0.0.0.0:11072 0.0.0.0:11073
+set -euo pipefail
+
+NODE_NAME=$1
+HTTP_ADDR=$2
+GRPC_ADDR=$3
+MYSQL_ADDR=$4
+POSTGRES_ADDR=$5
+
+GREPTIME_BIN="${GREPTIME_BIN:-./greptime}"
+GREPTIME_HOME="${GREPTIME_HOME:-./.greptimedb}"
+METASTORE_PORT="${METASTORE_PORT:-11080}"
+METASTORE_USER="${METASTORE_USER:-postgres}"
+METASTORE_DB="${METASTORE_DB:-postgres}"
+DATA_DIR="${GREPTIME_HOME}/standby-${NODE_NAME}"
+CONFIG_TEMPLATE="$(dirname "$0")/../config/standalone-standby.toml"
+CONFIG="${DATA_DIR}/standalone-standby.toml"
+
+# Source Garage S3 credentials (shared object storage for both nodes).
+. "${GREPTIME_HOME}/s3.env"
+
+mkdir -p "${DATA_DIR}"
+
+# Advertised gRPC identity = 127.0.0.1:<grpc port>. Reachable by the other node
+# (same host) and by the follower-read refresh loop.
+GRPC_PORT="${GRPC_ADDR##*:}"
+GRPC_SERVER_ADDR="127.0.0.1:${GRPC_PORT}"
+
+# Postgres metadata-store URL (shared by both nodes). Trust auth, no password.
+META_STORE_ADDR="postgres://${METASTORE_USER}@127.0.0.1:${METASTORE_PORT}/${METASTORE_DB}"
+
+# Generate node-specific config from template.
+sed \
+  -e "s|__HTTP_ADDR__|${HTTP_ADDR}|g" \
+  -e "s|__GRPC_BIND_ADDR__|${GRPC_ADDR}|g" \
+  -e "s|__GRPC_SERVER_ADDR__|${GRPC_SERVER_ADDR}|g" \
+  -e "s|__MYSQL_ADDR__|${MYSQL_ADDR}|g" \
+  -e "s|__POSTGRES_ADDR__|${POSTGRES_ADDR}|g" \
+  -e "s|__ELECTION_SERVER_ADDR__|${GRPC_SERVER_ADDR}|g" \
+  -e "s|__META_STORE_ADDR__|${META_STORE_ADDR}|g" \
+  -e "s|__DATA_HOME__|${DATA_DIR}|g" \
+  -e "s|__WAL_DIR__|${DATA_DIR}/wal|g" \
+  -e "s|__LOG_DIR__|${DATA_DIR}/logs|g" \
+  -e "s|__S3_BUCKET__|${S3_BUCKET}|g" \
+  -e "s|__S3_ENDPOINT__|${S3_ENDPOINT_URL}|g" \
+  -e "s|__S3_REGION__|${S3_REGION}|g" \
+  -e "s|__S3_ACCESS_KEY__|${S3_ACCESS_KEY}|g" \
+  -e "s|__S3_SECRET_KEY__|${S3_SECRET_KEY}|g" \
+  "${CONFIG_TEMPLATE}" > "${CONFIG}"
+
+exec "${GREPTIME_BIN}" standalone start \
+  --config-file "${CONFIG}"

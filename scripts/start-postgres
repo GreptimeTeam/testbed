@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+#
+# start-postgres [port]
+#
+# Runs the Postgres metadata + election backend for the Enterprise active/standby
+# standalone pair. Idempotently initializes the data directory on first start,
+# then execs the postgres server in the FOREGROUND (so process-compose owns it).
+#
+# Listens on 127.0.0.1 only, with trust auth (no password) — sufficient for a
+# local testbed. The enterprise standalones connect as user 'postgres' to the
+# default 'postgres' database and create their own metadata/election tables.
+#
+# Data lives under .greptimedb/postgres and is wiped by `testbedctl clean`.
+set -euo pipefail
+
+PORT="${1:-${METASTORE_PORT:-11080}}"
+GREPTIME_HOME="${GREPTIME_HOME:-./.greptimedb}"
+DATADIR="${GREPTIME_HOME}/postgres"
+
+# initdb refuses to run as root and requires an empty/non-existent data dir.
+# Skip initialization if the cluster already exists (restart-safe).
+if [ ! -s "${DATADIR}/PG_VERSION" ]; then
+  echo "==> Initializing Postgres data dir at ${DATADIR}"
+  mkdir -p "${DATADIR}"
+  initdb \
+    --username=postgres \
+    --auth=trust \
+    -D "${DATADIR}" >/dev/null
+else
+  echo "==> Reusing existing Postgres data dir at ${DATADIR}"
+fi
+
+# Bind localhost only; trust auth is already set by initdb for host connections.
+exec postgres \
+  -D "${DATADIR}" \
+  -c listen_addresses=127.0.0.1 \
+  -c port="${PORT}" \
+  -c unix_socket_directories=/tmp \
+  -c max_connections=100

@@ -39,6 +39,27 @@ process-compose up standalone-fs
 
 Single-node GreptimeDB using **local disk** instead of Garage S3. No garage/etcd dependency — fastest mode to start. Data lives under `.greptimedb/standalone-fs/`. Same connection details as standalone above.
 
+### Enterprise Active/Standby Standalone
+
+```bash
+process-compose up haproxy-standby
+```
+
+Two **enterprise** standalone instances form an active/standby pair sharing Garage S3 (main data store) and a **Postgres** table (shared metadata + leader election); each keeps its own dedicated WAL. Only the elected **leader** accepts writes; the **follower** rejects writes and serves read-refreshed queries. `haproxy-standby` routes the client ports to whichever node is currently leader.
+
+- Requires an **enterprise** `greptime` binary provided in place as `./greptime` (or via `GREPTIME_BIN`) — the same path every other mode uses. The OSS binary cannot run this mode.
+- Election backend is **Postgres** (not etcd) — the enterprise active/standby election is built on the external RDS metadata store.
+- Clients use the same ports 11040-11043 as every other mode; traffic always reaches the active leader.
+
+| Protocol | Address |
+|---|---|
+| HTTP | `http://127.0.0.1:11040` |
+| gRPC | `127.0.0.1:11041` |
+| MySQL | `127.0.0.1:11042` |
+| PostgreSQL | `127.0.0.1:11043` |
+
+Test failover with `process-compose process stop standby-a` (stop the leader); standby-b is elected and haproxy reroutes automatically. Inspect roles via `curl http://127.0.0.1:11070/status/standalone/role` (and `:11074`).
+
 ### GreptimeDB Distributed Cluster
 
 ```bash
