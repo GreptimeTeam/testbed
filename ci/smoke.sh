@@ -1,25 +1,43 @@
 #!/usr/bin/env bash
 # CI smoke test for the testbed.
 #
-# Starts the single-node standalone-fs server (local File backend — no
-# garage/postgres needed) and asserts that at least one SQL statement works
-# (a write that round-trips through the client port).
+# Starts ONE GreptimeDB deployment mode and asserts that SQL works (a write
+# that round-trips through the client PostgreSQL port 11043):
+#
+#   standalone-fs  single-node GreptimeDB, local File backend (no deps)
+#   distributed    full cluster: postgres -> metasrv -> datanode-{0,1} ->
+#                  frontend -> haproxy (Garage S3 for data, Postgres for
+#                  metadata + metasrv election)
+#
+# Both modes expose the SAME client ports (11040 HTTP / 11043 PostgreSQL), so
+# the SQL checks are identical — only the process-compose target differs.
+#
+# Usage: ci/smoke.sh [standalone-fs|distributed]   (default: standalone-fs)
 #
 # Run inside `nix develop` (which provides process-compose, psql and curl):
+#   nix develop --command bash ci/smoke.sh distributed
 #
-#   nix develop --command bash ci/smoke.sh
-#
-# Expects a `greptime` binary at the project root (GREPTIME_BIN default),
-# e.g. downloaded from the latest GreptimeTeam/greptimedb release.
+# Expects a `greptime` binary at the project root (GREPTIME_BIN default), e.g.
+# downloaded from the latest GreptimeTeam/greptimedb release.
 #
 # NOTE: this script intentionally does NOT tear the server down on exit — the
 # caller (CI workflow) fetches logs on failure and tears down in a later step.
 set -euo pipefail
 
+MODE="${1:-standalone-fs}"
 HEALTH_WAIT_SECS="${HEALTH_WAIT_SECS:-120}"
 
-echo "==> starting standalone-fs (single-node, local File backend)"
-process-compose --tui=false up --detached standalone-fs
+case "$MODE" in
+  standalone-fs) TARGET="standalone-fs" ;;
+  distributed)   TARGET="haproxy" ;;
+  *)
+    echo "ERROR: unknown mode '$MODE' (expected: standalone-fs | distributed)" >&2
+    exit 2
+    ;;
+esac
+
+echo "==> starting mode='$MODE' (process-compose target: $TARGET)"
+process-compose --tui=false up --detached "$TARGET"
 
 echo "==> waiting for client HTTP port 11040 to become healthy (up to ${HEALTH_WAIT_SECS}s)"
 healthy=0
@@ -50,4 +68,4 @@ if [ "${val:-}" != "42" ]; then
   exit 1
 fi
 
-echo "==> SMOKE TEST PASSED"
+echo "==> SMOKE TEST PASSED ($MODE)"

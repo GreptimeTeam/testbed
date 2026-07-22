@@ -1,9 +1,10 @@
 name: ci
 
-# Smoke test the testbed on every push and pull request: stand up a
-# single-node GreptimeDB (standalone-fs) using the LATEST greptimedb release
-# binary and assert that SQL works (a write that round-trips through the
-# client port).
+# Smoke test the testbed on every push and pull request, in TWO modes, using
+# the LATEST greptimedb release binary:
+#   - standalone-fs : single-node GreptimeDB (local File backend)
+#   - distributed   : postgres -> metasrv -> datanode-{0,1} -> frontend -> haproxy
+# Each job asserts SQL works (a write that round-trips through the client port).
 on:
   push:
   pull_request:
@@ -15,7 +16,11 @@ concurrency:
 
 jobs:
   smoke:
-    name: standalone-fs smoke (latest greptimedb release)
+    name: ${{ matrix.mode }} smoke (latest greptimedb release)
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [standalone-fs, distributed]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -49,25 +54,36 @@ jobs:
           install -m 0755 "$bin" ./greptime
           ./greptime --version
 
-      - name: Temporarily strip unreleased iceberg_manifest plugin from config
-        # config/standalone-fs.toml enables the `iceberg_manifest` plugin, which
-        # is newer than the latest greptimedb release (the release hard-fails on
-        # unknown plugin variants). Once the greptimedb patch to tolerate
-        # unknown plugin options lands, DELETE THIS STEP and the config will
-        # work against the release as-is.
+      - name: Temporarily strip unreleased iceberg_manifest plugin from configs
+        # Several config templates enable the `iceberg_manifest` plugin, which is
+        # newer than the latest greptimedb release (the release hard-fails on
+        # unknown plugin variants). Strip it from every config that uses it so
+        # both the standalone-fs and distributed modes work against the release.
+        # Once the greptimedb patch to tolerate unknown plugin options lands,
+        # DELETE THIS STEP and the configs will work as-is.
         run: |
-          sed -i -e '/^\[\[plugins\]\]$/d' -e '/^iceberg_manifest[[:space:]]*=/d' \
-            config/standalone-fs.toml
-          echo "Stripped iceberg_manifest plugin block from config/standalone-fs.toml"
+          for f in config/standalone.toml config/standalone-fs.toml \
+                   config/datanode.toml config/frontend.toml; do
+            sed -i -e '/^\[\[plugins\]\]$/d' -e '/^iceberg_manifest[[:space:]]*=/d' "$f"
+          done
+          echo "Stripped iceberg_manifest plugin block from config templates"
 
-      - name: Start standalone-fs and run a SQL smoke test
-        run: nix develop --command bash ci/smoke.sh
+      - name: Start ${{ matrix.mode }} and run a SQL smoke test
+        run: nix develop --command bash ci/smoke.sh ${{ matrix.mode }}
 
-      - name: Dump standalone-fs logs on failure
+      - name: Dump logs on failure
         if: failure()
         run: |
           nix develop --command bash -c 'process-compose process list || true'
-          nix develop --command bash -c 'process-compose process logs standalone-fs --tail 200 || true' || true
+          if [ "${{ matrix.mode }}" = "distributed" ]; then
+            procs="postgres metasrv datanode-0 datanode-1 frontend haproxy"
+          else
+            procs="standalone-fs"
+          fi
+          for p in $procs; do
+            echo "==================== logs: $p ===================="
+            nix develop --command bash -c "process-compose process logs $p --tail 200" || true
+          done
 
       - name: Tear down
         if: always()
