@@ -92,6 +92,8 @@ A utility script for common operations against the running cluster:
 ./testbedctl telemetrygen metrics up        # Ingest continuous OTel metrics (gauge/sum/histogram)
 ./testbedctl telemetrygen metrics down      # Stop metrics ingestion
 ./testbedctl metrics-partition              # Partition greptime_physical_table into 4 ranges on 'timebox'
+./testbedctl flush <table>                  # Flush a table's memtable (admin flush_table)
+./testbedctl compact <table> [type] [opts]  # Trigger compaction (admin compact_table); optional twcs/swcs + parallelism=N
 ./testbedctl clean                          # Remove .greptimedb
 ```
 

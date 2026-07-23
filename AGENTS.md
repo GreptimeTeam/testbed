@@ -198,6 +198,8 @@ rm -rf .greptimedb                            # clean all data
 ./testbedctl telemetrygen metrics up           # start continuous metrics (gauge/sum/histogram)
 ./testbedctl telemetrygen metrics down         # stop metrics ingestion
 ./testbedctl metrics-partition                 # partition greptime_physical_table into 4 ranges on 'timebox'
+./testbedctl flush <table>                      # flush a table's memtable (admin flush_table)
+./testbedctl compact <table> [type] [opts]      # trigger compaction (admin compact_table); optional twcs/swcs + parallelism=N
 ./testbedctl clean                              # remove .greptimedb (full data reset)
 ```
 
