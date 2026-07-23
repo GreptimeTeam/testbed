@@ -22,6 +22,9 @@ Commands:
                 Pass a table name (default: opentelemetry_traces4).
                 Use -local for standalone-fs (local filesystem, no S3).
   flush <table> Flush a table's memtable (admin flush_table) to trigger manifest export
+  compact <table> [type] [opts]
+                Trigger compaction (admin compact_table). Optional type (twcs/swcs)
+                and options (e.g. parallelism=4). Mirrors `flush`.
   clean         Remove .greptimedb directory
   help          Show this help
 EOF
@@ -51,6 +54,27 @@ cmd_flush() {
   # Client PG port 11043: haproxy (distributed) or standalone/standalone-fs.
   exec psql -h 127.0.0.1 -p 11043 -d public -U root \
     -c "admin flush_table('${table}');"
+}
+
+cmd_compact() {
+  local table="${1:-}"
+  if [ -z "$table" ]; then
+    echo "Usage: testbedctl compact <table_name> [type] [options]" >&2
+    echo "  e.g. testbedctl compact my_table" >&2
+    echo "       testbedctl compact my_table twcs" >&2
+    echo "       testbedctl compact my_table twcs 'parallelism=4'" >&2
+    exit 1
+  fi
+  shift
+  # Build the compact_table(...) argument list. The table name is always first;
+  # any extra args are forwarded as the compaction type / type-specific options.
+  local args="'${table}'" a
+  for a in "$@"; do
+    args="${args}, '${a}'"
+  done
+  # Client PG port 11043: haproxy (distributed) or standalone/standalone-fs.
+  exec psql -h 127.0.0.1 -p 11043 -d public -U root \
+    -c "admin compact_table(${args});"
 }
 
 cmd_mysql() {
@@ -324,6 +348,7 @@ case "${1:-help}" in
   duckdb)       shift; cmd_duckdb "$@" ;;
   pyiceberg)    shift; cmd_pyiceberg "$@" ;;
   flush)        shift; cmd_flush "$@" ;;
+  compact)      shift; cmd_compact "$@" ;;
   clean)        cmd_clean ;;
   help|--help|-h)
     usage
