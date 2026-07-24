@@ -95,6 +95,8 @@ A utility script for common operations against the running cluster:
 ./testbedctl flush <table>                  # Flush a table's memtable (admin flush_table)
 ./testbedctl compact <table> [type] [opts]  # Trigger compaction (admin compact_table); optional twcs/swcs + parallelism=N
 ./testbedctl gc <table> [--full]            # Trigger garbage collection (admin gc_table); --full = full file listing
+./testbedctl gc-regions <id>... [--full]    # Trigger GC for specific regions (admin gc_regions); region ids are u64
+./testbedctl purge <table> [-y]             # Permanently purge a DROPPED table's data (admin purge_table); -y skips prompt
 ./testbedctl clean                          # Remove .greptimedb
 ```
 
