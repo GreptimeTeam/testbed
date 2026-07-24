@@ -200,6 +200,7 @@ rm -rf .greptimedb                            # clean all data
 ./testbedctl metrics-partition                 # partition greptime_physical_table into 4 ranges on 'timebox'
 ./testbedctl flush <table>                      # flush a table's memtable (admin flush_table)
 ./testbedctl compact <table> [type] [opts]      # trigger compaction (admin compact_table); optional twcs/swcs + parallelism=N
+./testbedctl gc <table> [--full]                 # trigger garbage collection (admin gc_table); --full = full object-storage file listing
 ./testbedctl clean                              # remove .greptimedb (full data reset)
 ```
 

@@ -94,6 +94,7 @@ A utility script for common operations against the running cluster:
 ./testbedctl metrics-partition              # Partition greptime_physical_table into 4 ranges on 'timebox'
 ./testbedctl flush <table>                  # Flush a table's memtable (admin flush_table)
 ./testbedctl compact <table> [type] [opts]  # Trigger compaction (admin compact_table); optional twcs/swcs + parallelism=N
+./testbedctl gc <table> [--full]            # Trigger garbage collection (admin gc_table); --full = full file listing
 ./testbedctl clean                          # Remove .greptimedb
 ```
 
