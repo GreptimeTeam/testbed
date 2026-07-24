@@ -28,6 +28,12 @@ Commands:
   gc <table> [--full]
                 Trigger garbage collection (admin gc_table). --full forces a full
                 object-storage file listing.
+  gc-regions <id>... [--full]
+                Trigger GC for specific regions (admin gc_regions). Region IDs are
+                u64 numbers (e.g. from greptimedb logs). --full forces a full listing.
+  purge <table> [-y|--yes]
+                Permanently purge a DROPPED table's data (admin purge_table).
+                Irreversible; -y skips the confirmation prompt.
   clean         Remove .greptimedb directory
   help          Show this help
 EOF
@@ -105,6 +111,68 @@ cmd_gc() {
   # Client PG port 11043: haproxy (distributed) or standalone/standalone-fs.
   exec psql -h 127.0.0.1 -p 11043 -d public -U root \
     -c "admin gc_table(${args});"
+}
+
+cmd_gc_regions() {
+  local full=false args="" a id
+  local -a ids=()
+  for a in "$@"; do
+    case "$a" in
+      --full|-f) full=true ;;
+      -*) echo "Unknown option: $a" >&2; exit 1 ;;
+      *)
+        if ! [[ "$a" =~ ^[0-9]+$ ]]; then
+          echo "ERROR: region id must be a number, got '$a'" >&2
+          exit 1
+        fi
+        ids+=("$a") ;;
+    esac
+  done
+  if [ "${#ids[@]}" -eq 0 ]; then
+    echo "Usage: testbedctl gc-regions <region_id> [region_id...] [--full]" >&2
+    echo "  Trigger GC for specific regions (admin gc_regions)." >&2
+    echo "  --full: force a full object-storage file listing." >&2
+    echo "  Region IDs are u64 values (e.g. from greptimedb logs)." >&2
+    exit 1
+  fi
+  # admin gc_regions(<id>...[, <bool>]) — region ids are u64 numbers (unquoted).
+  for id in "${ids[@]}"; do
+    args="${args:+$args, }${id}"
+  done
+  [ "$full" = true ] && args="${args}, true"
+  # Client PG port 11043: haproxy (distributed) or standalone/standalone-fs.
+  exec psql -h 127.0.0.1 -p 11043 -d public -U root \
+    -c "admin gc_regions(${args});"
+}
+
+cmd_purge() {
+  local table="" yes=false a
+  for a in "$@"; do
+    case "$a" in
+      -y|--yes) yes=true ;;
+      -*) echo "Unknown option: $a" >&2; exit 1 ;;
+      *) [ -z "$table" ] && table="$a" ;;
+    esac
+  done
+  if [ -z "$table" ]; then
+    echo "Usage: testbedctl purge <table_name> [-y|--yes]" >&2
+    echo "  Permanently purge a DROPPED table's data (admin purge_table)." >&2
+    echo "  Irreversible. -y skips the confirmation prompt." >&2
+    exit 1
+  fi
+  # purge_table permanently deletes a dropped table's data — confirm first.
+  if [ "$yes" != true ]; then
+    printf "About to PERMANENTLY purge table '%s' (irreversible). Continue? [y/N] " "$table" >&2
+    local reply=""
+    read -r reply || true
+    case "$reply" in
+      y|Y|yes|YES) ;;
+      *) echo "aborted." >&2; exit 1 ;;
+    esac
+  fi
+  # Client PG port 11043: haproxy (distributed) or standalone/standalone-fs.
+  exec psql -h 127.0.0.1 -p 11043 -d public -U root \
+    -c "admin purge_table('${table}');"
 }
 
 cmd_mysql() {
@@ -380,6 +448,8 @@ case "${1:-help}" in
   flush)        shift; cmd_flush "$@" ;;
   compact)      shift; cmd_compact "$@" ;;
   gc)           shift; cmd_gc "$@" ;;
+  gc-regions)   shift; cmd_gc_regions "$@" ;;
+  purge)        shift; cmd_purge "$@" ;;
   clean)        cmd_clean ;;
   help|--help|-h)
     usage
